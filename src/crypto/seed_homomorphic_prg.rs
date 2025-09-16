@@ -3,6 +3,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
 use crate::crypto::prg::populate_random;
+use crate::crypto::util::matrix_vector_multiplication;
 
 // create a type for a 128 bit prime field
 #[derive(MontConfig)]
@@ -20,9 +21,14 @@ pub struct SeedHomomorphicPRG {
 impl SeedHomomorphicPRG {
     pub fn new() -> Self {
         Self {
-            public_parameter : Self::sample_public_parameter(128, 128),
-            seed : Self::sample_seed(128)
+            public_parameter : Self::sample_public_parameter(4096, 2048),
+            seed : Self::sample_seed(2048)
         }
+    }
+
+    pub fn expand(&self) -> Vec<F128> {
+        // multiply the public parameter matrix by the seed
+        matrix_vector_multiplication(&self.public_parameter, &self.seed)
     }
 
     fn sample_public_parameter(size0: usize, size1: usize) -> Vec<Vec<F128>> {
