@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 ark-ff = "0.5.0"
+ark-std = "0.5.0"
+rand = "0.8.5"
+rand_chacha = "0.3.1"
