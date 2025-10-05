@@ -3,7 +3,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
 use crate::crypto::prg::populate_random;
-use crate::crypto::util::matrix_vector_multiplication;
+use crate::crypto::util::{matrix_vector_multiplication, round};
 
 // create a type for a 128 bit prime field
 #[derive(MontConfig)]
@@ -28,7 +28,12 @@ impl SeedHomomorphicPRG {
 
     pub fn expand(&self) -> Vec<F128> {
         // multiply the public parameter matrix by the seed
-        matrix_vector_multiplication(&self.public_parameter, &self.seed)
+        let product = matrix_vector_multiplication(&self.public_parameter, &self.seed);
+        // perform the rounding operation with p = 2^53
+        let output = round(product, (1u64) << 53);
+        // print the output to check if it is correct
+        println!("Output: {:?}", output);
+        output
     }
 
     fn sample_public_parameter(size0: usize, size1: usize) -> Vec<Vec<F128>> {
