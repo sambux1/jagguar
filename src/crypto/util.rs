@@ -35,6 +35,18 @@ where
     ret
 }
 
+// Convert a field element into a native u64 by taking the least-significant limb.
+// This is correct when the integer representative fits in 64 bits (e.g. outputs of round with p <= 2^64).
+pub fn field_to_64<F>(x: F) -> i64
+where
+    F: PrimeField,
+    <F as PrimeField>::BigInt: AsRef<[u64]>,
+{
+    let limbs = x.into_bigint();
+    let limbs = limbs.as_ref();
+    if limbs.is_empty() { 0 } else { limbs[0] as i64 }
+}
+
 // Convert a 2-limb little-endian bigint to u128 (specific to F128).
 fn biguint_from_bigint<B>(b: B) -> BigUint
 where
