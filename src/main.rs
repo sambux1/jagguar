@@ -3,6 +3,9 @@ use std::time::Instant;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
+use aggregation::Client;
+use aggregation::opa::OPAClient;
+
 fn main() {
     let start = Instant::now();
 
@@ -24,12 +27,12 @@ fn main() {
     println!("Shamir {} / {}", shamir.threshold(), shamir.num_shares());
     let mut rng = ChaCha20Rng::from_entropy();
     let shares = shamir.share(aggregation::crypto::F128::from(17), &mut rng).unwrap();
-    // print the shares
-    for share in shares.iter() {
-        println!("Share: {:?}", share);
-    }
     // reconstruct the secret
     let secret = shamir.reconstruct(&shares).unwrap();
     println!("Secret: {:?}", secret);
     println!("Opened secret: {:?}", secret);
+
+    let mut opa_client = OPAClient::<i32>::new();
+    opa_client.set_input(17);
+    println!("Input: {:?}", opa_client.get_input());
 }
