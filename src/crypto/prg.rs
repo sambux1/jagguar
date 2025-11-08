@@ -12,3 +12,7 @@ where
     }
 }
 
+// Populate a vector of bytes with random bytes
+pub fn populate_random_bytes<R: Rng + ?Sized>(v: &mut [u8], rng: &mut R) {
+    rng.fill(v);
+}

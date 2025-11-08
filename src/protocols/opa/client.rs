@@ -14,6 +14,10 @@ impl<Input> OPAClient<Input> {
     pub fn get_input(&self) -> Option<&Input> {
         self.input.as_ref()
     }
+
+    pub fn setup(&self) {
+        // setup the client
+    }
 }
 
 impl<Input> Client<Input> for OPAClient<Input> {
