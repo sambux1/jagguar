@@ -28,13 +28,13 @@ impl OPASetupParameters {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OPAState {
-    succinct_seed: [u8; 32],
-    security_parameter: u64,
-    corruption_threshold: u64,
-    reconstruction_threshold: u64,
-    committee_size: u64,
+    pub succinct_seed: [u8; 32],
+    pub security_parameter: u64,
+    pub corruption_threshold: u64,
+    pub reconstruction_threshold: u64,
+    pub committee_size: u64,
 }
 
 pub struct OPAServer {
@@ -60,14 +60,11 @@ impl OPAServer {
         server.setup(server.setup_parameters);
         server
     }
-
-    pub fn get_state(&self) -> &OPAState {
-        &self.state
-    }
 }
 
 impl Server for OPAServer {
     type SetupParameters = OPASetupParameters;
+    type State = OPAState;
 
     fn setup(&mut self, args: Self::SetupParameters) {
         self.setup_parameters = args;
@@ -90,6 +87,10 @@ impl Server for OPAServer {
         let shprg = SeedHomomorphicPRG::new_from_public_seed(succinct_seed);
         let public_parameter = shprg.get_public_parameter();
         self.public_parameter = public_parameter.clone();
+    }
+
+    fn get_state(&self) -> &Self::State {
+        &self.state
     }
 
     fn aggregate(&self) {

@@ -3,7 +3,7 @@ use std::time::Instant;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
-use aggregation::{Client};
+use aggregation::{Client, Server};
 use aggregation::opa::{OPAClient, OPAServer, OPASetupParameters};
 
 fn main() {
@@ -32,11 +32,13 @@ fn main() {
     println!("Secret: {:?}", secret);
     println!("Opened secret: {:?}", secret);
 
-    let mut opa_client = OPAClient::<i32>::new();
-    opa_client.set_input(17);
-    println!("Input: {:?}", opa_client.get_input());
-
     let opa_server = OPAServer::new(OPASetupParameters::new(128, 16, 16, 31));
     let state = opa_server.get_state();
     println!("State: {:?}", state);
+
+    let mut opa_client = OPAClient::<i32>::new();
+    opa_client.set_input(vec![17]);
+    println!("Input: {:?}", opa_client.get_input());
+    opa_client.set_server_state(state.clone());
+    opa_client.encrypt_input();
 }
