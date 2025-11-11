@@ -1,13 +1,14 @@
 use crate::protocols::client::Client;
 use crate::protocols::opa::server::OPAState;
 use crate::crypto::SeedHomomorphicPRG;
+use crate::util::packing::pack_vector;
 
 pub struct OPAClient<T> {
     input: Option<Vec<T>>,
     server_state: Option<OPAState>,
 }
 
-impl<T> OPAClient<T> {
+impl<T: Copy + Into<u64>> OPAClient<T> {
     pub fn new() -> Self {
         Self {
             input: None,
@@ -27,12 +28,16 @@ impl<T> OPAClient<T> {
         // setup the client
     }
 
-    fn encode_input(&self) {
-        // do nothing yet
+    fn encode_input(&self) -> Vec<u64>
+    where
+        T: Copy + Into<u64>,
+    {
+        let input = self.input.as_ref().expect("OPA client input must be set.");
+        pack_vector(input, 64)
     }
 }
 
-impl<T> Client<T> for OPAClient<T> {
+impl<T: Copy + Into<u64>> Client<T> for OPAClient<T> {
     fn set_input(&mut self, input: Vec<T>) {
         self.input = Some(input);
     }
@@ -47,7 +52,7 @@ impl<T> Client<T> for OPAClient<T> {
             self.server_state.as_ref().unwrap().succinct_seed);
         
         // encode the input
-        self.encode_input();
+        let _encoded_input = self.encode_input();
 
         // generate the mask from the SHPRG
     }

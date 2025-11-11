@@ -36,8 +36,8 @@ fn main() {
     let state = opa_server.get_state();
     println!("State: {:?}", state);
 
-    let mut opa_client = OPAClient::<i32>::new();
-    opa_client.set_input(vec![17]);
+    let mut opa_client = OPAClient::<u32>::new();
+    opa_client.set_input(vec![1, 2]);
     println!("Input: {:?}", opa_client.get_input());
     opa_client.set_server_state(state.clone());
     opa_client.encrypt_input();
