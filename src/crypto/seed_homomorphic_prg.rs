@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     // test that the almost homomorphic property holds
-    fn check_homomorphic() {
+    fn test_homomorphic() {
         // generate two seed homomorphic PRG with the same public parameter matrix
         let prg_0 = SeedHomomorphicPRG::new_from_public_seed([0u8; 32]);
         let prg_1 = SeedHomomorphicPRG::new_from_public_seed([0u8; 32]);

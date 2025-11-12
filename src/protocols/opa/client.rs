@@ -8,7 +8,7 @@ pub struct OPAClient<T> {
     server_state: Option<OPAState>,
 }
 
-impl<T: Copy + Into<u64>> OPAClient<T> {
+impl<T: Copy + Into<u64> + num_traits::FromPrimitive> OPAClient<T> {
     pub fn new() -> Self {
         Self {
             input: None,
@@ -30,14 +30,14 @@ impl<T: Copy + Into<u64>> OPAClient<T> {
 
     fn encode_input(&self) -> Vec<u64>
     where
-        T: Copy + Into<u64>,
+        T: Copy + Into<u64> + num_traits::FromPrimitive,
     {
         let input = self.input.as_ref().expect("OPA client input must be set.");
-        pack_vector(input, 64)
+        pack_vector(&input)
     }
 }
 
-impl<T: Copy + Into<u64>> Client<T> for OPAClient<T> {
+impl<T: Copy + Into<u64> + num_traits::FromPrimitive> Client<T> for OPAClient<T> {
     fn set_input(&mut self, input: Vec<T>) {
         self.input = Some(input);
     }
