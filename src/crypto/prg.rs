@@ -1,5 +1,13 @@
 use ark_ff::UniformRand;
 use ark_std::rand::Rng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
+
+// Construct a secure, stream-oriented RNG seeded from system entropy.
+// Centralizes the project's default RNG choice.
+pub fn default_prg() -> ChaCha20Rng {
+    ChaCha20Rng::from_entropy()
+}
 
 // Generic over any field `F` that implements `UniformRand`.
 pub fn populate_random<F, R>(v: &mut [F], rng: &mut R)

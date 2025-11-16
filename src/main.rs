@@ -32,7 +32,7 @@ fn main() {
     println!("Secret: {:?}", secret);
     println!("Opened secret: {:?}", secret);
 
-    let opa_server = OPAServer::new(OPASetupParameters::new(128, 16, 16, 31));
+    let opa_server = OPAServer::new(OPASetupParameters::new(40, 16, 16, 31));
     let state = opa_server.get_state();
     println!("State: {:?}", state);
 
