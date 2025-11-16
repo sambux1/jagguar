@@ -37,7 +37,7 @@ fn main() {
     println!("State: {:?}", state);
 
     let mut opa_client = OPAClient::<u32>::new();
-    opa_client.set_input(vec![1, 2]);
+    opa_client.set_input(vec![1, 2, 3, 7, 5, 6, 4, 8]);
     println!("Input: {:?}", opa_client.get_input());
     opa_client.set_server_state(state.clone());
     opa_client.encrypt_input();
