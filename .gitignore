@@ -21,3 +21,6 @@ target
 #.idea/
 
 Cargo.lock
+
+# Lattice Estimator
+scripts/parameters/lattice-estimator/
