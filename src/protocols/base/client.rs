@@ -1,4 +1,6 @@
 pub trait Client<T> {
+    type Output;
+    
     fn set_input(&mut self, input: Vec<T>);
-    fn encrypt_input(&self);
+    fn encrypt_input(&mut self) -> Self::Output;
 }

@@ -1,9 +1,8 @@
 use crate::protocols::client::Client;
 use crate::protocols::opa::server::OPAState;
-use crate::crypto::{F128, SeedHomomorphicPRG};
+use crate::crypto::{F128, SeedHomomorphicPRG, Shamir};
 use crate::crypto::prg::{populate_random, default_prg};
 use crate::util::packing::{pack_vector, unpack_vector};
-use ark_ff::PrimeField;
 
 // 1 million parties, aspirational upper bound for the number of parties
 pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
@@ -11,6 +10,8 @@ pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
 pub struct OPAClient<T> {
     input: Option<Vec<T>>,
     server_state: Option<OPAState>,
+    #[cfg(test)]
+    last_seed: Option<Vec<F128>>,
 }
 
 impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
@@ -18,6 +19,8 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
         Self {
             input: None,
             server_state: None,
+            #[cfg(test)]
+            last_seed: None,
         }
     }
 
@@ -97,11 +100,13 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
 }
 
 impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T> {
+    type Output = (Vec<F128>, Vec<Vec<F128>>);
+    
     fn set_input(&mut self, input: Vec<T>) {
         self.input = Some(input);
     }
 
-    fn encrypt_input(&self) {
+    fn encrypt_input(&mut self) -> Self::Output {
         // assert that the input and server state are set
         assert!(self.input.is_some(), "OPA client input is not set.");
         assert!(self.server_state.is_some(), "OPA client server state is not set.");
@@ -123,6 +128,31 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
                 F128::from(x) + mask[i]
             })
             .collect();
+        
+        // secret share the SHPRG seed using Shamir secret sharing
+        let state = self.server_state.as_ref().unwrap();
+        let num_shares = state.committee_size as usize;
+        let threshold = state.reconstruction_threshold as usize;
+        let shamir = Shamir::<F128>::new(num_shares, threshold);
+        let seed = shprg.get_seed();
+
+        // organize as shares[party_index][seed_index] = y
+        let mut shares: Vec<Vec<F128>> = vec![Vec::with_capacity(seed.len()); num_shares];
+        for &secret in seed.iter() {
+            let secret_shares = shamir.share(secret, &mut default_prg()).expect("Shamir share failed");
+            for i in 0..num_shares {
+                let (_x, y) = secret_shares[i];
+                shares[i].push(y);
+            }
+        }
+
+        // store the seed for tests only
+        #[cfg(test)]
+        {
+            self.last_seed = Some(seed.clone());
+        }
+
+        (masked_input, shares)
     }
 }
 
@@ -132,6 +162,7 @@ mod tests {
     use super::*;
     use crate::protocols::server::Server;
     use crate::protocols::opa::{OPAServer, OPASetupParameters};
+    use crate::crypto::shamir::Shamir;
 
     #[test]
     // test that decode(encode(x)) = x
@@ -149,5 +180,47 @@ mod tests {
         let encoded_input = opa_client.encode_input();
         let decoded_input = opa_client.decode_output(encoded_input);
         assert_eq!(expected, decoded_input);
+    }
+
+    #[test]
+    // test that the encryption produces the correct secret shares
+    fn test_encryption() {
+        let input : Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+    
+        let opa_server = OPAServer::new(OPASetupParameters::new(40, 16, 16, 31));
+        let state = opa_server.get_state();
+        
+        let mut opa_client = OPAClient::<u32>::new();
+        opa_client.set_input(input);
+        opa_client.set_server_state(state.clone());
+
+        // encrypt the input
+        let (_masked_input, shares) = opa_client.encrypt_input();
+        
+        // reconstruct the seed from the secret shares
+        let shamir = Shamir::<F128>::new(
+            state.committee_size as usize,
+            state.reconstruction_threshold as usize
+        );
+        // shares is organized as shares[party_index][seed_index] = y.
+        // reconstruct each seed component j from all parties' shares at index j.
+        let num_parties = shares.len();
+        let seed_len = shares[0].len();
+        let mut reconstructed_seed: Vec<crate::crypto::F128> = Vec::with_capacity(seed_len);
+        for j in 0..seed_len {
+            let mut pairs: Vec<(crate::crypto::F128, crate::crypto::F128)> = Vec::with_capacity(num_parties);
+            for i in 0..num_parties {
+                let x = crate::crypto::F128::from((i as u64) + 1);
+                let y = shares[i][j];
+                pairs.push((x, y));
+            }
+            let s = shamir.reconstruct(&pairs).unwrap();
+            reconstructed_seed.push(s);
+        }
+
+        // get the last seed from the client, generated during encryption
+        let last_seed = opa_client.last_seed.unwrap();
+        
+        assert_eq!(last_seed, reconstructed_seed);
     }
 }
