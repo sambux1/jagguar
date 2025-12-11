@@ -12,6 +12,10 @@ use crate::crypto::util::{matrix_vector_multiplication, round};
 pub struct F128Config;
 pub type F128 = Fp<MontBackend<F128Config, 2>, 2>;
 
+// see /scripts/parameters/shprg_parameters.json for details
+const LAMBDA: usize = 3072;
+const P: u128 = 1 << 92;
+
 #[derive(Debug)]
 pub struct SeedHomomorphicPRG {
     public_parameter: Vec<Vec<F128>>,
@@ -21,21 +25,21 @@ pub struct SeedHomomorphicPRG {
 impl SeedHomomorphicPRG {
     pub fn new() -> Self {
         Self {
-            public_parameter : Self::sample_public_parameter(4096, 2048),
-            seed : Self::sample_seed(2048)
+            public_parameter : Self::sample_public_parameter(4096, LAMBDA),
+            seed : Self::sample_seed(LAMBDA)
         }
     }
 
     pub fn new_from_public_seed(seed: [u8; 32]) -> Self {
         Self {
-            public_parameter : Self::expand_public_parameter(4096, 2048, seed),
-            seed : Self::sample_seed(2048)
+            public_parameter : Self::expand_public_parameter(4096, LAMBDA, seed),
+            seed : Self::sample_seed(LAMBDA)
         }
     }
 
     pub fn new_from_both_seeds(public_seed: [u8; 32], seed: Vec<F128>) -> Self {
         Self {
-            public_parameter : Self::expand_public_parameter(4096, 2048, public_seed),
+            public_parameter : Self::expand_public_parameter(4096, LAMBDA, public_seed),
             seed : seed
         }
     }
@@ -43,8 +47,8 @@ impl SeedHomomorphicPRG {
     pub fn expand(&self) -> Vec<F128> {
         // multiply the public parameter matrix by the seed
         let product = matrix_vector_multiplication(&self.public_parameter, &self.seed);
-        // perform the rounding operation with p = 2^53
-        let output = round(product, (1u64) << 53);
+        // perform the rounding operation with p = 2^92
+        let output = round(product, P);
         output
     }
 
@@ -88,7 +92,7 @@ impl SeedHomomorphicPRG {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::util::field_to_64;
+    use crate::crypto::util::field_to_128;
 
     #[test]
     // test that the almost homomorphic property holds
@@ -115,12 +119,16 @@ mod tests {
 
         // check that the output of the sum is approximately the sum of the outputs
         for i in 0..output_0.len() {
-            // convert to u64
-            let o0 = field_to_64(output_0[i]);
-            let o1 = field_to_64(output_1[i]);
-            let o_sum = field_to_64(output_sum[i]);
-            let diff = ((o0 + o1) % (1i64 << 53)) - o_sum;
-            assert!(diff.abs() <= 1);
+            // convert to u128 and compare modulo 2^92 using circular distance
+            let m = 1u128 << 92;
+            let o0 = field_to_128(output_0[i]);
+            let o1 = field_to_128(output_1[i]);
+            let o_sum = field_to_128(output_sum[i]);
+            let sum_mod = (o0 + o1) % m;
+            // compute absolute value, not natively supported by u128
+            let delta = if sum_mod >= o_sum { sum_mod - o_sum } else { o_sum - sum_mod };
+            let dist = delta.min(m - delta);
+            assert!(dist <= 1);
         }
     }
 }

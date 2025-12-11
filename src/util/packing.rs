@@ -1,25 +1,26 @@
 use std::mem;
 
-// Pack a vector of elements into a vector of u64s
-pub fn pack_vector<T>(vector: &Vec<T>) -> Vec<u64>
+// Pack a vector of elements into a vector of u32s
+pub fn pack_vector<T>(vector: &Vec<T>) -> Vec<u32>
 where
-    T: Copy + Into<u64>,
+    T: Copy + Into<u32>,
 {
     let bitwidth = mem::size_of::<T>() * 8;
-    assert!(bitwidth <= 64, "Type too large to pack into u64");
+    assert!(bitwidth <= 32, "Type too large to pack into u32");
 
     if vector.is_empty() {
         return Vec::new();
     }
 
-    let compression_factor = 64 / bitwidth;
+    let compression_factor = 32 / bitwidth;
     let mut out = Vec::with_capacity((vector.len() + compression_factor - 1) / compression_factor);
 
-    let mut acc = 0u64;
+    let mut acc = 0u32;
     let mut count = 0;
 
     for &v in vector {
-        acc |= (v.into() & ((1u64 << bitwidth) - 1)) << (count * bitwidth);
+        let mask: u32 = if bitwidth == 32 { u32::MAX } else { (1u32 << bitwidth) - 1 };
+        acc |= (v.into() & mask) << (count * bitwidth);
         count += 1;
         if count == compression_factor {
             out.push(acc);
@@ -35,26 +36,26 @@ where
     out
 }
 
-// Unpack a vector of u64s into a vector of smaller bitwidth
-pub fn unpack_vector<T>(vector: &Vec<u64>) -> Vec<T>
+// Unpack a vector of u32s into a vector of smaller bitwidth
+pub fn unpack_vector<T>(vector: &Vec<u32>) -> Vec<T>
 where
     T: Copy + num_traits::FromPrimitive,
 {
     let bitwidth = mem::size_of::<T>() * 8;
-    assert!(bitwidth <= 64, "Type too large to unpack from u64");
+    assert!(bitwidth <= 32, "Type too large to unpack from u32");
 
     if vector.is_empty() {
         return Vec::new();
     }
 
-    let compression_factor = 64 / bitwidth;
+    let compression_factor = 32 / bitwidth;
     let mut out = Vec::with_capacity(vector.len() * compression_factor);
-    let mask: u64 = if bitwidth == 64 { u64::MAX } else { (1u64 << bitwidth) - 1 };
+    let mask: u32 = if bitwidth == 32 { u32::MAX } else { (1u32 << bitwidth) - 1 };
 
     for &word in vector {
         for i in 0..compression_factor {
             let val = (word >> (i * bitwidth)) & mask;
-            let t = num_traits::FromPrimitive::from_u64(val)
+            let t = num_traits::FromPrimitive::from_u32(val)
                 .expect("Unpack failed: value does not fit in target type");
             out.push(t);
         }
@@ -71,7 +72,7 @@ mod tests {
     #[test]
     // test that the packing and unpacking functions work correctly
     fn test_packing() {
-        let input = vec![1u32, 2u32, 3u32, 4u32, 5u32, 6u32];
+        let input = vec![1u16, 2u16, 3u16, 4u16, 5u16, 6u16];
 
         // pack the input and check that it is smaller
         let packed = pack_vector(&input);

@@ -16,7 +16,7 @@ pub fn matrix_vector_multiplication<F: Field>(matrix: &Vec<Vec<F>>, vector: &Vec
     out
 }
 
-pub fn round<F>(vector: Vec<F>, p: u64) -> Vec<F>
+pub fn round<F>(vector: Vec<F>, p: u128) -> Vec<F>
 where
     F: PrimeField,
     <F as PrimeField>::BigInt: AsRef<[u64]>,
@@ -29,8 +29,8 @@ where
         let product = x_big * &p_big; // exact big integer product
         let y = &product / &q;        // floor division
         // map back into field by interpreting y as small integer (y < p <= 2^64)
-        let y_u64 = y.to_u64().unwrap_or(u64::MAX);
-        ret.push(F::from(y_u64));
+        let y_u128 = y.to_u128().unwrap_or(u128::MAX);
+        ret.push(F::from(y_u128));
     }
     ret
 }
@@ -45,6 +45,19 @@ where
     let limbs = x.into_bigint();
     let limbs = limbs.as_ref();
     if limbs.is_empty() { 0 } else { limbs[0] as i64 }
+}
+
+// Convert a field element into a native u128 by computing two 64-bit limbs.
+pub fn field_to_128<F>(x: F) -> u128
+where
+    F: PrimeField,
+    <F as PrimeField>::BigInt: AsRef<[u64]>,
+{
+    let limbs = x.into_bigint();
+    let limbs = limbs.as_ref();
+    let lo = limbs.get(0).copied().unwrap_or(0) as u128;
+    let hi = limbs.get(1).copied().unwrap_or(0) as u128;
+    lo | (hi << 64)
 }
 
 // Convert a 2-limb little-endian bigint to u128 (specific to F128).

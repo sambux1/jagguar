@@ -5,15 +5,15 @@ use crate::crypto::prg::{populate_random, default_prg};
 use crate::util::packing::{pack_vector, unpack_vector};
 use ark_ff::PrimeField;
 
-// TODO: temporary upper bound on number of parties
-pub const NUM_PARTIES_UPPER_BOUND: u64 = 1024;
+// 1 million parties, aspirational upper bound for the number of parties
+pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
 
 pub struct OPAClient<T> {
     input: Option<Vec<T>>,
     server_state: Option<OPAState>,
 }
 
-impl<T: Copy + Into<u64> + num_traits::FromPrimitive> OPAClient<T> {
+impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
     pub fn new() -> Self {
         Self {
             input: None,
@@ -33,18 +33,18 @@ impl<T: Copy + Into<u64> + num_traits::FromPrimitive> OPAClient<T> {
         // setup the client
     }
 
-    fn encode_input(&self) -> Vec<F128>
+    fn encode_input(&self) -> Vec<u128>
     where
-        T: Copy + Into<u64> + num_traits::FromPrimitive,
+        T: Copy + Into<u32> + num_traits::FromPrimitive,
     {
         let input = self.input.as_ref().expect("OPA client input must be set.");
         let packed = pack_vector(&input);
         
         // compute 2^kappa and (2^kappa * n)
-        let two_to_kappa = 1u64 << (self.server_state.as_ref().unwrap().security_parameter);
-        let two_to_kappa_times_n = two_to_kappa * NUM_PARTIES_UPPER_BOUND;
-        let two_to_kappa_f = F128::from(two_to_kappa);
-        let two_to_kappa_times_n_f = F128::from(two_to_kappa_times_n);
+        let kappa: u32 = self.server_state.as_ref().unwrap().security_parameter as u32;
+        let two_to_kappa: u128 = 1u128 << kappa;
+        let two_to_kappa_times_n: u128 = two_to_kappa * (NUM_PARTIES_UPPER_BOUND as u128);
+        let mask: u64 = if kappa >= 64 { u64::MAX } else { (two_to_kappa - 1) as u64 };
         
         // compute a vector of random numbers in [0, 2^kappa)
         let mut random_numbers = vec![0u64; packed.len()];
@@ -52,42 +52,39 @@ impl<T: Copy + Into<u64> + num_traits::FromPrimitive> OPAClient<T> {
         populate_random(&mut random_numbers, &mut rng);
         // mask away the higher order bits of the random numbers
         random_numbers = random_numbers.iter()
-            .map(|x| x & (two_to_kappa - 1)).collect();
+            .map(|&x| x & mask).collect();
         
         // encoded = (2^kappa * n * x) + r + 2^kappa
-        let encoded = packed.iter().zip(random_numbers.iter())
-            .map(|(x, y)| two_to_kappa_times_n_f * F128::from(*x) + F128::from(*y) + two_to_kappa_f)
+        let encoded: Vec<u128> = packed
+            .iter()
+            .enumerate()
+            .map(|(i, &x)| {
+                let r: u128 = random_numbers[i] as u128;
+                two_to_kappa_times_n * (x as u128) + r + two_to_kappa
+            })
             .collect();
         
         // return the encoded input
         encoded
     }
 
-    fn decode_output(&self, output: Vec<F128>) -> Vec<T>
+    fn decode_output(&self, output: Vec<u128>) -> Vec<T>
     where
         T: num_traits::FromPrimitive,
     {
-        // first, convert the encoded output to u128
-        let output_u128: Vec<u128> = output.iter()
-            .map(|x| {
-                let bi = (*x).into_bigint(); // consume copy, get BigInt with 2 limbs
-                let limbs = bi.0;
-                (limbs[0] as u128) | ((limbs[1] as u128) << 64)
-            })
-            .collect();
- 
         // compute 2^kappa and (2^kappa * n)
-        let two_to_kappa = 1u64 << (self.server_state.as_ref().unwrap().security_parameter);
-        let two_to_kappa_times_n = two_to_kappa * NUM_PARTIES_UPPER_BOUND;
+        let kappa: u32 = self.server_state.as_ref().unwrap().security_parameter as u32;
+        let two_to_kappa: u128 = 1u128 << kappa;
+        let two_to_kappa_times_n: u128 = two_to_kappa * (NUM_PARTIES_UPPER_BOUND as u128);
 
         // decoded = ceil(encoded / (2^kappa * n)) - 1
         let denom = two_to_kappa_times_n as u128;
-        let decoded: Vec<u64> = output_u128.iter()
+        let decoded: Vec<u32> = output.iter()
             .map(|x| {
-                let q = *x / denom;
-                let r = *x % denom;
+                let q = x / denom;
+                let r = x % denom;
                 let ceil = q + if r != 0 { 1 } else { 0 };
-                (ceil as u64) - 1
+                (ceil as u32) - 1
             })
             .collect();
  
@@ -99,7 +96,7 @@ impl<T: Copy + Into<u64> + num_traits::FromPrimitive> OPAClient<T> {
     }
 }
 
-impl<T: Copy + Into<u64> + num_traits::FromPrimitive> Client<T> for OPAClient<T> {
+impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T> {
     fn set_input(&mut self, input: Vec<T>) {
         self.input = Some(input);
     }
@@ -114,8 +111,18 @@ impl<T: Copy + Into<u64> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
             self.server_state.as_ref().unwrap().succinct_seed);
         
         // encode the input
-        let _encoded_input = self.encode_input();
+        let encoded_input : Vec<u128> = self.encode_input();
+        
         // generate the mask from the SHPRG
+        let mask : Vec<F128> = shprg.expand();
+
+        // mask the input, converting the u128s to F128s and applying the mask
+        let masked_input : Vec<F128> = encoded_input.iter()
+            .enumerate()
+            .map(|(i, &x)| {
+                F128::from(x) + mask[i]
+            })
+            .collect();
     }
 }
 
@@ -129,7 +136,7 @@ mod tests {
     #[test]
     // test that decode(encode(x)) = x
     fn test_encoding() {
-        let input = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let input : Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let expected = input.clone();
 
         let opa_server = OPAServer::new(OPASetupParameters::new(40, 16, 16, 31));
