@@ -1,6 +1,8 @@
-use aggregation::opa::OPAClient;
+use aggregation::protocols::opa::OPA;
+use aggregation::simulator::Simulator;
 
 fn main() {
-    let _opa_client = OPAClient::<u32>::new();
-    println!("Simulator starting... (dummy message)");
+	let _sim: Simulator<OPA<u32>> = Simulator::new();
+
+	println!("Initialized simulator.");
 }
