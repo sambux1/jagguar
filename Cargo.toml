@@ -2,6 +2,7 @@
 name = "aggregation"
 version = "0.1.0"
 edition = "2024"
+default-run = "aggregation"
 
 [dependencies]
 ark-ff = "0.5.0"
@@ -10,3 +11,12 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 num-bigint = "0.4"
 num-traits = "0.2"
+
+[[bin]]
+name = "simulator"
+path = "src/simulator/main.rs"
+required-features = ["simulator"]
+
+[features]
+default = []
+simulator = []

@@ -1,0 +1,2 @@
+[alias]
+simulator = "run --bin simulator --features simulator"
