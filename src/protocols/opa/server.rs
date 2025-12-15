@@ -43,8 +43,11 @@ pub struct OPAServer {
     public_parameter: Vec<Vec<crate::crypto::F128>>,
 }
 
-impl OPAServer {
-    pub fn new(setup_parameters: OPASetupParameters) -> Self {
+impl Server for OPAServer {
+    type SetupParameters = OPASetupParameters;
+    type State = OPAState;
+    
+    fn new(setup_parameters: OPASetupParameters) -> Self {
         // default initialization, delegate real work to setup function
         let mut server = Self {
             setup_parameters,
@@ -60,11 +63,6 @@ impl OPAServer {
         server.setup(server.setup_parameters);
         server
     }
-}
-
-impl Server for OPAServer {
-    type SetupParameters = OPASetupParameters;
-    type State = OPAState;
 
     fn setup(&mut self, args: Self::SetupParameters) {
         self.setup_parameters = args;

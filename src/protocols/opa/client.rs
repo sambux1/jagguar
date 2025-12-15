@@ -15,15 +15,6 @@ pub struct OPAClient<T> {
 }
 
 impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
-    pub fn new() -> Self {
-        Self {
-            input: None,
-            server_state: None,
-            #[cfg(test)]
-            last_seed: None,
-        }
-    }
-
     pub fn get_input(&self) -> Option<&Vec<T>> {
         self.input.as_ref()
     }
@@ -101,6 +92,15 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
 
 impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T> {
     type Output = (Vec<F128>, Vec<Vec<F128>>);
+
+    fn new() -> Self {
+        Self {
+            input: None,
+            server_state: None,
+            #[cfg(test)]
+            last_seed: None,
+        }
+    }
     
     fn set_input(&mut self, input: Vec<T>) {
         self.input = Some(input);
