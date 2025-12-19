@@ -2,6 +2,8 @@ use crate::protocols::Protocol;
 use crate::protocols::server::Server;
 use crate::protocols::client::Client;
 
+const STARTING_PORT: u16 = 10000;
+
 pub struct Simulator<P: Protocol> {
 	server: Option<P::Server>,
 	clients: Vec<P::Client>,
@@ -19,8 +21,11 @@ impl<P: Protocol> Simulator<P> {
 
 	pub fn start_server(&mut self, server_parameters: <P::Server as Server>::SetupParameters) {
 		// create the server
-		let server = P::Server::new(server_parameters);
+		let mut server = P::Server::new(server_parameters);
 		
+		// setup the communicator
+		server.setup_communicator(STARTING_PORT);
+
 		// set the server in the simulator state
 		self.server = Some(server);
 

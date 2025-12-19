@@ -3,6 +3,7 @@ use crate::crypto::SeedHomomorphicPRG;
 use crate::crypto::prg::populate_random_bytes;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use crate::communicator::Communicator;
 
 #[derive(Copy, Clone)]
 pub struct OPASetupParameters {
@@ -41,6 +42,7 @@ pub struct OPAServer {
     setup_parameters: OPASetupParameters,
     state: OPAState,
     public_parameter: Vec<Vec<crate::crypto::F128>>,
+    communicator: Option<Communicator>
 }
 
 impl Server for OPAServer {
@@ -59,9 +61,18 @@ impl Server for OPAServer {
                 committee_size: 0,
             },
             public_parameter: Vec::new(),
+            communicator: None,
         };
         server.setup(server.setup_parameters);
         server
+    }
+
+    fn set_communicator(&mut self, comm: Communicator) {
+        self.communicator = Some(comm);
+    }
+
+    fn get_communicator(&mut self) -> &mut Communicator {
+        self.communicator.as_mut().unwrap()
     }
 
     fn setup(&mut self, args: Self::SetupParameters) {

@@ -6,5 +6,7 @@ pub use protocols::{opa, client};
 pub use protocols::{client::Client, server::Server};
 pub use protocols::opa::{OPAClient, OPAServer};
 
+pub mod communicator;
+
 #[cfg(feature = "simulator")]
 pub mod simulator;
