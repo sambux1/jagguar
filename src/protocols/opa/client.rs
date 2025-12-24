@@ -19,10 +19,6 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
         self.input.as_ref()
     }
 
-    pub fn set_server_state(&mut self, state: OPAState) {
-        self.server_state = Some(state);
-    }
-
     pub fn setup(&self) {
         // setup the client
     }
@@ -92,6 +88,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
 
 impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T> {
     type Output = (Vec<F128>, Vec<Vec<F128>>);
+    type ServerState = OPAState;
 
     fn new() -> Self {
         Self {
@@ -104,6 +101,10 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
     
     fn set_input(&mut self, input: Vec<T>) {
         self.input = Some(input);
+    }
+
+    fn set_server_state(&mut self, state: Self::ServerState) {
+        self.server_state = Some(state);
     }
 
     fn encrypt_input(&mut self) -> Self::Output {

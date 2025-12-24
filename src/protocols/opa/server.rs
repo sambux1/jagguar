@@ -36,6 +36,7 @@ pub struct OPAState {
     pub corruption_threshold: u64,
     pub reconstruction_threshold: u64,
     pub committee_size: u64,
+    pub port: u16,
 }
 
 pub struct OPAServer {
@@ -59,6 +60,7 @@ impl Server for OPAServer {
                 corruption_threshold: 0,
                 reconstruction_threshold: 0,
                 committee_size: 0,
+                port: 0,
             },
             public_parameter: Vec::new(),
             communicator: None,
@@ -90,6 +92,7 @@ impl Server for OPAServer {
             corruption_threshold: self.setup_parameters.corruption_threshold,
             reconstruction_threshold: self.setup_parameters.reconstruction_threshold,
             committee_size: self.setup_parameters.committee_size,
+            port: 0,
         };
 
         // sample the public parameter from the succinct seed
@@ -98,7 +101,14 @@ impl Server for OPAServer {
         self.public_parameter = public_parameter.clone();
     }
 
+    fn on_communicator_setup(&mut self, port: u16) {
+        self.state.port = port;
+    }
+
     fn get_state(&self) -> &Self::State {
+        // check that the port is set
+        assert!(self.state.port != 0, "OPA server port is not set.");
+        
         &self.state
     }
 
