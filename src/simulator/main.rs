@@ -13,5 +13,11 @@ fn main() {
     // create many clients
     sim.start_clients(1000);
 
-	println!("Initialized simulator");
+    println!("Running the simulator...");
+
+    // let the simulator run for 5 seconds
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
+    // teardown the simulator
+    sim.teardown();
 }

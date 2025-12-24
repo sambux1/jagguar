@@ -1,11 +1,13 @@
 use crate::protocols::Protocol;
 use crate::protocols::server::Server;
 use crate::protocols::client::Client;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 const STARTING_PORT: u16 = 10000;
 
 pub struct Simulator<P: Protocol> {
-	server: Option<P::Server>,
+	server_shutdown: Option<Arc<AtomicBool>>,
 	clients: Vec<P::Client>,
 	_marker: core::marker::PhantomData<(P, P::Server, P::Client, P::Committee)>,
 }
@@ -13,21 +15,23 @@ pub struct Simulator<P: Protocol> {
 impl<P: Protocol> Simulator<P> {
 	pub fn new() -> Self {
 		Self {
-			server: None,
+			server_shutdown: Some(Arc::new(AtomicBool::new(false))),
 			clients: Vec::new(),
 			_marker: core::marker::PhantomData,
 		}
 	}
 
-	pub fn start_server(&mut self, server_parameters: <P::Server as Server>::SetupParameters) {
-		// create the server
-		let mut server = P::Server::new(server_parameters);
-		
-		// setup the communicator
-		server.setup_communicator(STARTING_PORT);
+	pub fn start_server(&mut self, server_parameters: <P::Server as Server>::SetupParameters)
+	where
+		P::Server: Send + 'static,
+		<P::Server as Server>::SetupParameters: Send + 'static,
+	{
+		let shutdown = Arc::clone(self.server_shutdown.as_ref().unwrap());
 
-		// set the server in the simulator state
-		self.server = Some(server);
+		std::thread::spawn(move || {
+			let mut server = P::Server::new(server_parameters);
+			server.setup_communicator(STARTING_PORT, shutdown);
+		});
 
 		println!("Server started");
 	}
@@ -40,5 +44,10 @@ impl<P: Protocol> Simulator<P> {
 		}
 
 		println!("{} clients started", self.clients.len());
+	}
+
+	pub fn teardown(&mut self) {
+		// send the kill signal to the server through the shutdown flag
+		self.server_shutdown.as_ref().unwrap().store(true, Ordering::Relaxed);
 	}
 }
