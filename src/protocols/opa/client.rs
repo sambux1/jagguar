@@ -3,6 +3,7 @@ use crate::protocols::opa::server::OPAState;
 use crate::crypto::{F128, SeedHomomorphicPRG, Shamir};
 use crate::crypto::prg::{populate_random, default_prg};
 use crate::util::packing::{pack_vector, unpack_vector};
+use crate::communicator::Communicator;
 
 // 1 million parties, aspirational upper bound for the number of parties
 pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
@@ -10,6 +11,7 @@ pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
 pub struct OPAClient<T> {
     input: Option<Vec<T>>,
     server_state: Option<OPAState>,
+    encrypted_output: Option<(Vec<F128>, Vec<Vec<F128>>)>,
     #[cfg(test)]
     last_seed: Option<Vec<F128>>,
 }
@@ -94,6 +96,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         Self {
             input: None,
             server_state: None,
+            encrypted_output: None,
             #[cfg(test)]
             last_seed: None,
         }
@@ -107,7 +110,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         self.server_state = Some(state);
     }
 
-    fn encrypt_input(&mut self) -> Self::Output {
+    fn encrypt_input(&mut self) {
         // assert that the input and server state are set
         assert!(self.input.is_some(), "OPA client input is not set.");
         assert!(self.server_state.is_some(), "OPA client server state is not set.");
@@ -153,7 +156,25 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
             self.last_seed = Some(seed.clone());
         }
 
-        (masked_input, shares)
+        // save to state
+        self.encrypted_output = Some((masked_input.clone(), shares.clone()));
+    }
+
+    // send the encrypted input to the server
+    fn send_input(&mut self, port: u16) {
+        // create a communicator on the passed port
+        let communicator = Communicator::new(port);
+
+        // establish a connection to the server through the communicator
+        let server_port = self.server_state.as_ref().unwrap().port;
+        let connection = communicator.connect_to_server(server_port);
+        if let Err(e) = connection {
+            eprintln!("Failed to connect to server: {}", e);
+            return;
+        }
+
+        // send the encrypted input to the server
+        // TODO
     }
 }
 
@@ -196,7 +217,8 @@ mod tests {
         opa_client.set_server_state(state.clone());
 
         // encrypt the input
-        let (_masked_input, shares) = opa_client.encrypt_input();
+        opa_client.encrypt_input();
+        let (_masked_input, shares) = opa_client.encrypted_output.as_ref().unwrap();
         
         // reconstruct the seed from the secret shares
         let shamir = Shamir::<F128>::new(

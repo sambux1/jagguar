@@ -11,7 +11,7 @@ fn main() {
     sim.start_server(server_parameters);
 
     // create many clients
-    sim.start_clients(1000);
+    sim.start_clients(10);
 
     println!("Running the simulator...");
 

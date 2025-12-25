@@ -1,16 +1,17 @@
 use crate::protocols::Protocol;
 use crate::protocols::server::Server;
 use crate::protocols::client::Client;
+use crate::crypto::prg::{default_prg, populate_random};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc;
 
 const STARTING_PORT: u16 = 10000;
+const INPUT_LEN: usize = 1024;
 
 pub struct Simulator<P: Protocol> {
 	server_shutdown: Option<Arc<AtomicBool>>,
 	server_state: Option<<P::Server as Server>::State>,
-	clients: Vec<P::Client>,
 	_marker: core::marker::PhantomData<(P, P::Server, P::Client, P::Committee)>,
 }
 
@@ -19,7 +20,6 @@ impl<P: Protocol> Simulator<P> {
 		Self {
 			server_shutdown: Some(Arc::new(AtomicBool::new(false))),
 			server_state: None,
-			clients: Vec::new(),
 			_marker: core::marker::PhantomData,
 		}
 	}
@@ -50,16 +50,38 @@ impl<P: Protocol> Simulator<P> {
 
 	pub fn start_clients(&mut self, num_clients: usize)
 	where
-		<P::Server as Server>::State: Clone,
+		<P::Server as Server>::State: Clone + Send + 'static,
+		P::Client: Send + 'static,
+		P::Input: From<u32>,
 	{
+		let mut port = STARTING_PORT;
 		// create the clients
 		for _ in 0..num_clients {
+			port += 1;
+
 			let mut client = P::Client::new();
 			client.set_server_state(self.server_state.as_ref().unwrap().clone());
-			self.clients.push(client);
+
+			std::thread::spawn(move || {
+				// generate a random input
+				let mut rng = default_prg();
+				let mut input = vec![0u32; INPUT_LEN];
+				populate_random(&mut input, &mut rng);
+				let input: Vec<P::Input> = input.into_iter().map(|x| x.into()).collect();
+
+				// set the client's input
+				client.set_input(input);
+
+				// encrypt the input
+				client.encrypt_input();
+
+				// send the input to the server
+				// the port is automatically passed by value, so this is thread-safe
+				client.send_input(port);
+			});
 		}
 
-		println!("{} clients started", self.clients.len());
+		println!("{} clients started", num_clients);
 	}
 
 	pub fn teardown(&mut self) {

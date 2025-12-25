@@ -1,6 +1,7 @@
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use socket2::{Socket, Domain, Type};
 
 pub struct Communicator {
     port: u16,
@@ -50,5 +51,21 @@ impl Communicator {
             }
         }
         Ok(())
+    }
+
+    pub fn connect_to_server(&self, server_port: u16) -> std::io::Result<TcpStream> {
+        // create a socket and bind to our local port
+        let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
+        socket.set_reuse_address(true)?;
+        let local_addr: SocketAddr = format!("127.0.0.1:{}", self.port).parse().unwrap();
+        socket.bind(&local_addr.into())?;
+
+        // connect to the server's port
+        let server_addr: SocketAddr = format!("127.0.0.1:{}", server_port).parse().unwrap();
+        socket.connect(&server_addr.into())?;
+
+        // convert to TcpStream
+        let stream = TcpStream::from(socket);
+        Ok(stream)
     }
 }

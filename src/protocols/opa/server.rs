@@ -106,9 +106,6 @@ impl Server for OPAServer {
     }
 
     fn get_state(&self) -> &Self::State {
-        // check that the port is set
-        assert!(self.state.port != 0, "OPA server port is not set.");
-        
         &self.state
     }
 
