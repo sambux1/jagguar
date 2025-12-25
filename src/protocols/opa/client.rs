@@ -4,6 +4,7 @@ use crate::crypto::{F128, SeedHomomorphicPRG, Shamir};
 use crate::crypto::prg::{populate_random, default_prg};
 use crate::util::packing::{pack_vector, unpack_vector};
 use crate::communicator::Communicator;
+use ark_serialize::CanonicalSerialize;
 
 // 1 million parties, aspirational upper bound for the number of parties
 pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
@@ -167,14 +168,17 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
 
         // establish a connection to the server through the communicator
         let server_port = self.server_state.as_ref().unwrap().port;
-        let connection = communicator.connect_to_server(server_port);
-        if let Err(e) = connection {
-            eprintln!("Failed to connect to server: {}", e);
-            return;
-        }
+        let (masked_input, shares) = self.encrypted_output.as_ref()
+            .expect("Must call encrypt_input before send_input");
 
-        // send the encrypted input to the server
-        // TODO
+        // serialize using ark-serialize
+        let mut data = Vec::new();
+        masked_input.serialize_compressed(&mut data).expect("Failed to serialize masked_input");
+        shares.serialize_compressed(&mut data).expect("Failed to serialize shares");
+
+        if let Err(e) = communicator.send_to_server(server_port, &data) {
+            eprintln!("Failed to send to server: {}", e);
+        }
     }
 }
 

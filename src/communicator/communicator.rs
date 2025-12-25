@@ -1,12 +1,15 @@
 use std::net::{TcpListener, TcpStream, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::io::{Read, Write};
+use std::thread;
 use socket2::{Socket, Domain, Type};
 
 pub struct Communicator {
     port: u16,
     listener: Option<TcpListener>,
     shutdown: Option<Arc<AtomicBool>>,
+    received_messages: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl Communicator {
@@ -15,6 +18,7 @@ impl Communicator {
             port,
             listener: None,
             shutdown: None,
+            received_messages: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -40,7 +44,10 @@ impl Communicator {
             match self.listener.as_ref().unwrap().accept() {
                 Ok((stream, addr)) => {
                     println!("Accepted connection from {:?}", addr);
-                    drop(stream);
+                    let messages = Arc::clone(&self.received_messages);
+                    thread::spawn(move || {
+                        Self::handle_connection(stream, addr, messages);
+                    });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -53,7 +60,26 @@ impl Communicator {
         Ok(())
     }
 
-    pub fn connect_to_server(&self, server_port: u16) -> std::io::Result<TcpStream> {
+    fn handle_connection(mut stream: TcpStream, addr: SocketAddr, messages: Arc<Mutex<Vec<Vec<u8>>>>) {
+        let mut buffer = Vec::new();
+        match stream.read_to_end(&mut buffer) {
+            Ok(_) => {
+                let mut messages = messages.lock().unwrap();
+                messages.push(buffer);
+                println!("Received {} messages", messages.len());
+            }
+            Err(e) => {
+                eprintln!("Failed to read from {:?}: {}", addr, e);
+            }
+        }
+    }
+
+    pub fn get_received_messages(&self) -> Vec<Vec<u8>> {
+        let messages = self.received_messages.lock().unwrap();
+        messages.clone()
+    }
+
+    fn connect_to_server(&self, server_port: u16) -> std::io::Result<TcpStream> {
         // create a socket and bind to our local port
         let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
         socket.set_reuse_address(true)?;
@@ -67,5 +93,11 @@ impl Communicator {
         // convert to TcpStream
         let stream = TcpStream::from(socket);
         Ok(stream)
+    }
+
+    pub fn send_to_server(&self, server_port: u16, data: &[u8]) -> std::io::Result<()> {
+        let mut stream = self.connect_to_server(server_port)?;
+        stream.write_all(data)?;
+        Ok(())
     }
 }
