@@ -10,6 +10,7 @@ pub struct Communicator {
     listener: Option<TcpListener>,
     shutdown: Option<Arc<AtomicBool>>,
     received_messages: Arc<Mutex<Vec<Vec<u8>>>>,
+    signal_callback: Option<Arc<dyn Fn(SocketAddr) + Send + Sync>>,
 }
 
 impl Communicator {
@@ -19,7 +20,15 @@ impl Communicator {
             listener: None,
             shutdown: None,
             received_messages: Arc::new(Mutex::new(Vec::new())),
+            signal_callback: None,
         }
+    }
+
+    pub fn set_signal_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(SocketAddr) + Send + Sync + 'static,
+    {
+        self.signal_callback = Some(Arc::new(callback));
     }
 
     pub fn set_shutdown_flag(&mut self, shutdown: Arc<AtomicBool>) {
@@ -43,10 +52,10 @@ impl Communicator {
             }
             match self.listener.as_ref().unwrap().accept() {
                 Ok((stream, addr)) => {
-                    println!("Accepted connection from {:?}", addr);
                     let messages = Arc::clone(&self.received_messages);
+                    let callback = self.signal_callback.clone();
                     thread::spawn(move || {
-                        Self::handle_connection(stream, addr, messages);
+                        Self::handle_connection(stream, addr, messages, callback);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -60,17 +69,34 @@ impl Communicator {
         Ok(())
     }
 
-    fn handle_connection(mut stream: TcpStream, addr: SocketAddr, messages: Arc<Mutex<Vec<Vec<u8>>>>) {
+    fn handle_connection(
+        mut stream: TcpStream,
+        addr: SocketAddr,
+        messages: Arc<Mutex<Vec<Vec<u8>>>>,
+        callback: Option<Arc<dyn Fn(SocketAddr) + Send + Sync>>,
+    ) {
         let mut buffer = Vec::new();
         match stream.read_to_end(&mut buffer) {
             Ok(_) => {
-                let mut messages = messages.lock().unwrap();
-                messages.push(buffer);
-                println!("Received {} messages", messages.len());
+                // check if this is a signal (starts with "signal")
+                if buffer.starts_with(b"signal") {
+                    Self::handle_signal(addr, callback);
+                } else {
+                    let mut messages = messages.lock().unwrap();
+                    messages.push(buffer);
+                    println!("Received message from {:?} (total: {} messages)", addr, messages.len());
+                }
             }
             Err(e) => {
                 eprintln!("Failed to read from {:?}: {}", addr, e);
             }
+        }
+    }
+
+    fn handle_signal(addr: SocketAddr, callback: Option<Arc<dyn Fn(SocketAddr) + Send + Sync>>) {
+        println!("Signal handler called, received from {:?}", addr);
+        if let Some(ref cb) = callback {
+            cb(addr);
         }
     }
 
@@ -98,6 +124,12 @@ impl Communicator {
     pub fn send_to_server(&self, server_port: u16, data: &[u8]) -> std::io::Result<()> {
         let mut stream = self.connect_to_server(server_port)?;
         stream.write_all(data)?;
+        Ok(())
+    }
+
+    pub fn signal_server(&self, server_port: u16) -> std::io::Result<()> {
+        let mut stream = self.connect_to_server(server_port)?;
+        stream.write_all(b"signal")?;
         Ok(())
     }
 }

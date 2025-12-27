@@ -7,5 +7,5 @@ pub trait Protocol {
     type Input;
     type Server: Server;
     type Client: Client<Self::Input, ServerState = <Self::Server as Server>::State>;
-    type Committee: Committee;
+    type Committee: Committee<ServerState = <Self::Server as Server>::State>;
 }

@@ -11,6 +11,7 @@ pub trait Server: Sized {
     fn setup(&mut self, args: Self::SetupParameters);
     fn get_state(&self) -> &Self::State;
     fn aggregate(&self);
+    fn get_committee_port_offsets(&self) -> Vec<u16>;
 
     fn set_communicator(&mut self, comm: Communicator);
     fn get_communicator(&mut self) -> &mut Communicator;

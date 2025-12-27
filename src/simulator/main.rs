@@ -7,7 +7,7 @@ fn main() {
 
     // create the (single) server
     // TODO: don't depend on OPA parameters explicitly
-    let server_parameters = OPASetupParameters::new(40, 16, 16, 31);
+    let server_parameters = OPASetupParameters::new(40, 5, 5, 9);
     sim.start_server(server_parameters);
 
     // create many clients
@@ -17,6 +17,11 @@ fn main() {
 
     // let the simulator run for 5 seconds
     std::thread::sleep(std::time::Duration::from_secs(5));
+
+    // connect the committee members, disjoint from clients
+    sim.start_committee();
+
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     // teardown the simulator
     sim.teardown();

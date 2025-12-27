@@ -1,6 +1,7 @@
 use crate::protocols::Protocol;
 use crate::protocols::server::Server;
 use crate::protocols::client::Client;
+use crate::protocols::committee::Committee;
 use crate::crypto::prg::{default_prg, populate_random};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -12,6 +13,7 @@ const INPUT_LEN: usize = 1024;
 pub struct Simulator<P: Protocol> {
 	server_shutdown: Option<Arc<AtomicBool>>,
 	server_state: Option<<P::Server as Server>::State>,
+	committee_port_offsets: Option<Vec<u16>>,
 	_marker: core::marker::PhantomData<(P, P::Server, P::Client, P::Committee)>,
 }
 
@@ -20,6 +22,7 @@ impl<P: Protocol> Simulator<P> {
 		Self {
 			server_shutdown: Some(Arc::new(AtomicBool::new(false))),
 			server_state: None,
+			committee_port_offsets: None,
 			_marker: core::marker::PhantomData,
 		}
 	}
@@ -37,6 +40,7 @@ impl<P: Protocol> Simulator<P> {
 
 		// create server before running it in a thread
 		let mut server = P::Server::new(server_parameters);
+		self.committee_port_offsets = Some(server.get_committee_port_offsets());
 
 		// run the server in a thread
 		std::thread::spawn(move || {
@@ -82,6 +86,33 @@ impl<P: Protocol> Simulator<P> {
 		}
 
 		println!("{} clients started", num_clients);
+	}
+
+	pub fn start_committee(&mut self)
+	where
+		<P::Server as Server>::State: Clone + Send + 'static,
+		P::Committee: Send + 'static,
+	{
+		// make sure server state and port offsets are set
+		assert!(self.server_state.is_some(), "Server state is not set");
+		assert!(self.committee_port_offsets.is_some(), "Committee port offsets are not set");
+
+		let server_state = self.server_state.as_ref().unwrap();
+		let port_offsets = self.committee_port_offsets.as_ref().unwrap();
+
+		for (_, port_offset) in port_offsets.iter().enumerate() {
+			let port = STARTING_PORT + *port_offset;
+
+			// make a new committee member and set its server state
+			let mut committee_member = P::Committee::new(port);
+			committee_member.set_server_state(server_state.clone());
+
+			// run the committee member in a thread
+			std::thread::spawn(move || {
+				committee_member.retrieve_inputs();
+				committee_member.aggregate();
+			});
+		}
 	}
 
 	pub fn teardown(&mut self) {

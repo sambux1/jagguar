@@ -36,6 +36,7 @@ pub struct OPAState {
     pub corruption_threshold: u64,
     pub reconstruction_threshold: u64,
     pub committee_size: u64,
+    pub committee_port_offsets: Vec<u16>,
     pub port: u16,
 }
 
@@ -60,6 +61,7 @@ impl Server for OPAServer {
                 corruption_threshold: 0,
                 reconstruction_threshold: 0,
                 committee_size: 0,
+                committee_port_offsets: Vec::new(),
                 port: 0,
             },
             public_parameter: Vec::new(),
@@ -85,6 +87,13 @@ impl Server for OPAServer {
         let mut succinct_seed = [0u8; 32];
         populate_random_bytes(&mut succinct_seed, &mut rng);
 
+        // sample the committee ports
+        // TODO: currently just uses port offsets 1 through committee_size
+        let mut committee_port_offsets = Vec::<u16>::new();
+        for i in 1..=self.setup_parameters.committee_size as u16 {
+            committee_port_offsets.push(i);
+        }
+
         // set the public state
         self.state = OPAState {
             succinct_seed,
@@ -92,6 +101,7 @@ impl Server for OPAServer {
             corruption_threshold: self.setup_parameters.corruption_threshold,
             reconstruction_threshold: self.setup_parameters.reconstruction_threshold,
             committee_size: self.setup_parameters.committee_size,
+            committee_port_offsets,
             port: 0,
         };
 
@@ -103,10 +113,17 @@ impl Server for OPAServer {
 
     fn on_communicator_setup(&mut self, port: u16) {
         self.state.port = port;
+        self.get_communicator().set_signal_callback(move |_| {
+            println!("Signal handler called in server");
+        });
     }
 
     fn get_state(&self) -> &Self::State {
         &self.state
+    }
+
+    fn get_committee_port_offsets(&self) -> Vec<u16> {
+        self.state.committee_port_offsets.clone()
     }
 
     fn aggregate(&self) {
