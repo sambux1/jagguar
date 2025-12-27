@@ -21,7 +21,7 @@ fn main() {
     // connect the committee members, disjoint from clients
     sim.start_committee();
 
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    std::thread::sleep(std::time::Duration::from_secs(5));
 
     // teardown the simulator
     sim.teardown();

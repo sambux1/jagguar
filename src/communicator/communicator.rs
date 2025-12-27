@@ -10,7 +10,7 @@ pub struct Communicator {
     listener: Option<TcpListener>,
     shutdown: Option<Arc<AtomicBool>>,
     received_messages: Arc<Mutex<Vec<Vec<u8>>>>,
-    signal_callback: Option<Arc<dyn Fn(SocketAddr) + Send + Sync>>,
+    signal_callback: Option<Arc<dyn Fn(TcpStream, u16) + Send + Sync>>,
 }
 
 impl Communicator {
@@ -26,7 +26,7 @@ impl Communicator {
 
     pub fn set_signal_callback<F>(&mut self, callback: F)
     where
-        F: Fn(SocketAddr) + Send + Sync + 'static,
+        F: Fn(TcpStream, u16) + Send + Sync + 'static,
     {
         self.signal_callback = Some(Arc::new(callback));
     }
@@ -73,19 +73,27 @@ impl Communicator {
         mut stream: TcpStream,
         addr: SocketAddr,
         messages: Arc<Mutex<Vec<Vec<u8>>>>,
-        callback: Option<Arc<dyn Fn(SocketAddr) + Send + Sync>>,
+        callback: Option<Arc<dyn Fn(TcpStream, u16) + Send + Sync>>,
     ) {
-        let mut buffer = Vec::new();
-        match stream.read_to_end(&mut buffer) {
+        // read exactly 6 bytes to check if it's a signal
+        let mut signal_buffer = vec![0u8; 6];
+        match stream.read_exact(&mut signal_buffer) {
             Ok(_) => {
-                // check if this is a signal (starts with "signal")
-                if buffer.starts_with(b"signal") {
-                    Self::handle_signal(addr, callback);
-                } else {
-                    let mut messages = messages.lock().unwrap();
-                    messages.push(buffer);
-                    println!("Received message from {:?} (total: {} messages)", addr, messages.len());
+                if signal_buffer.starts_with(b"signal") {
+                    // it's a signal - call the callback with the stream
+                    println!("Signal received from {:?}", addr);
+                    if let Some(ref cb) = callback {
+                        cb(stream, addr.port());
+                    }
+                    return;
                 }
+                // not a signal - read the rest and combine with what we already read
+                let mut rest = Vec::new();
+                let _ = stream.read_to_end(&mut rest);
+                signal_buffer.extend_from_slice(&rest);
+                let mut messages = messages.lock().unwrap();
+                messages.push(signal_buffer);
+                println!("Received message from {:?} (total: {} messages)", addr, messages.len());
             }
             Err(e) => {
                 eprintln!("Failed to read from {:?}: {}", addr, e);
@@ -93,16 +101,8 @@ impl Communicator {
         }
     }
 
-    fn handle_signal(addr: SocketAddr, callback: Option<Arc<dyn Fn(SocketAddr) + Send + Sync>>) {
-        println!("Signal handler called, received from {:?}", addr);
-        if let Some(ref cb) = callback {
-            cb(addr);
-        }
-    }
-
-    pub fn get_received_messages(&self) -> Vec<Vec<u8>> {
-        let messages = self.received_messages.lock().unwrap();
-        messages.clone()
+    pub fn get_received_messages(&self) -> Arc<Mutex<Vec<Vec<u8>>>> {
+        Arc::clone(&self.received_messages)
     }
 
     fn connect_to_server(&self, server_port: u16) -> std::io::Result<TcpStream> {
@@ -127,9 +127,38 @@ impl Communicator {
         Ok(())
     }
 
-    pub fn signal_server(&self, server_port: u16) -> std::io::Result<()> {
+    pub fn signal_server(&self, server_port: u16) -> std::io::Result<TcpStream> {
         let mut stream = self.connect_to_server(server_port)?;
         stream.write_all(b"signal")?;
+        Ok(stream)
+    }
+
+    pub fn receive_from_server(&self, server_port: u16) -> std::io::Result<Vec<u8>> {
+        println!("Receiving from server");
+        let mut stream = self.signal_server(server_port)?;
+        println!("Connected to server");
+        let mut buffer = Vec::new();
+        stream.read_to_end(&mut buffer)?;
+        println!("Received {} bytes from server", buffer.len());
+        Ok(buffer)
+    }
+
+    pub fn send_on_stream(mut stream: TcpStream, inputs: Vec<Vec<u8>>) -> std::io::Result<()> {
+        // serialize all inputs together
+        let mut data = Vec::new();
+        for input in &inputs {
+            // Prefix each input with its length for parsing
+            let len = input.len() as u32;
+            data.extend_from_slice(&len.to_le_bytes());
+            data.extend_from_slice(input);
+        }
+        
+        // Send the data through the TCP stream
+        stream.write_all(&data)?;
+        stream.flush()?;
+        // Shutdown the write side so the reader knows there's no more data
+        stream.shutdown(std::net::Shutdown::Write)?;
+        println!("Sent {} inputs to committee member", inputs.len());
         Ok(())
     }
 }

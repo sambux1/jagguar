@@ -4,6 +4,9 @@ use crate::crypto::prg::populate_random_bytes;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use crate::communicator::Communicator;
+use crate::crypto::F128;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use std::net::TcpStream;
 
 #[derive(Copy, Clone)]
 pub struct OPASetupParameters {
@@ -44,7 +47,43 @@ pub struct OPAServer {
     setup_parameters: OPASetupParameters,
     state: OPAState,
     public_parameter: Vec<Vec<crate::crypto::F128>>,
-    communicator: Option<Communicator>
+    communicator: Option<Communicator>,
+}
+
+impl OPAServer {
+    fn send_to_committee(tcp_stream: TcpStream, raw_messages: Vec<Vec<u8>>, port: u16) {
+        let committee_index = port - 10001; // TODO: this should be a constant/partyID
+
+        // deserialize each client message to extract the portion for this committee member
+        let mut committee_shares = Vec::new();
+        
+        for raw_msg in &raw_messages {
+            // deserialize the client message: (masked_input, shares)
+            let mut cursor = std::io::Cursor::new(raw_msg);
+            let _masked_input = Vec::<F128>::deserialize_compressed(&mut cursor)
+                .expect("Failed to deserialize masked_input");
+            let shares = Vec::<Vec<F128>>::deserialize_compressed(&mut cursor)
+                .expect("Failed to deserialize shares");
+            
+            // extract the share for this committee member (committee_index is 0-based)
+            if (committee_index as usize) < shares.len() {
+                committee_shares.push(shares[committee_index as usize].clone());
+            }
+        }
+        
+        // serialize all shares for this committee member
+        let mut serialized_shares = Vec::new();
+        for share in &committee_shares {
+            let mut data = Vec::new();
+            share.serialize_compressed(&mut data).expect("Failed to serialize share");
+            serialized_shares.push(data);
+        }
+        
+        // send the combined shares to the committee member
+        if let Err(e) = Communicator::send_on_stream(tcp_stream, serialized_shares) {
+            eprintln!("Failed to send data to committee member {}: {}", committee_index, e);
+        }
+    }
 }
 
 impl Server for OPAServer {
@@ -113,8 +152,15 @@ impl Server for OPAServer {
 
     fn on_communicator_setup(&mut self, port: u16) {
         self.state.port = port;
-        self.get_communicator().set_signal_callback(move |_| {
+        
+        // Capture the received_messages Arc so the callback can access it
+        let messages = self.get_communicator().get_received_messages();
+        
+        // Set up the callback to gather inputs and send them through the stream
+        self.get_communicator().set_signal_callback(move |stream, port| {
             println!("Signal handler called in server");
+            let inputs = messages.lock().unwrap().clone();
+            Self::send_to_committee(stream, inputs, port);
         });
     }
 

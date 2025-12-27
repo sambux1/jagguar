@@ -27,7 +27,7 @@ impl Committee for OPACommittee {
     fn retrieve_inputs(&self) {
         // signal the server that we're ready to retrieve inputs
         let server_port = self.server_state.as_ref().unwrap().port;
-        self.communicator.signal_server(server_port).expect("Failed to signal server");
+        self.communicator.receive_from_server(server_port).expect("Failed to receive inputs from server");
     }
 
     fn aggregate(&self) {
