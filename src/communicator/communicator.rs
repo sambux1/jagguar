@@ -134,9 +134,7 @@ impl Communicator {
     }
 
     pub fn receive_from_server(&self, server_port: u16) -> std::io::Result<Vec<u8>> {
-        println!("Receiving from server");
         let mut stream = self.signal_server(server_port)?;
-        println!("Connected to server");
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer)?;
         println!("Received {} bytes from server", buffer.len());

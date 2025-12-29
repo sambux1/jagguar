@@ -3,6 +3,6 @@ pub trait Committee {
 
     fn new(port: u16) -> Self;
     fn set_server_state(&mut self, state: Self::ServerState);
-    fn retrieve_inputs(&self);
-    fn aggregate(&self);
+    fn retrieve_inputs(&mut self);
+    fn aggregate(&mut self);
 }
