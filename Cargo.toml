@@ -1,8 +1,8 @@
 [package]
-name = "aggregation"
+name = "jagguar"
 version = "0.1.0"
 edition = "2024"
-default-run = "aggregation"
+default-run = "jagguar"
 
 [dependencies]
 ark-ff = "0.5.0"

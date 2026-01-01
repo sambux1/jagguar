@@ -1,10 +1,10 @@
-use aggregation::crypto::{SeedHomomorphicPRG, shamir::Shamir};
+use jagguar::crypto::{SeedHomomorphicPRG, shamir::Shamir};
 use std::time::Instant;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
-use aggregation::{Client, Server};
-use aggregation::opa::{OPAClient, OPAServer, OPASetupParameters};
+use jagguar::{Client, Server};
+use jagguar::opa::{OPAClient, OPAServer, OPASetupParameters};
 
 fn main() {
     let start = Instant::now();
@@ -23,10 +23,10 @@ fn main() {
     let after_expand = Instant::now();
     println!("Expand: {:?}", after_expand.duration_since(after_sample));
 
-    let shamir = Shamir::<aggregation::crypto::F128>::new(31, 16);
+    let shamir = Shamir::<jagguar::crypto::F128>::new(31, 16);
     println!("Shamir {} / {}", shamir.threshold(), shamir.num_shares());
     let mut rng = ChaCha20Rng::from_entropy();
-    let shares = shamir.share(aggregation::crypto::F128::from(17), &mut rng).unwrap();
+    let shares = shamir.share(jagguar::crypto::F128::from(17), &mut rng).unwrap();
     // reconstruct the secret
     let secret = shamir.reconstruct(&shares).unwrap();
     println!("Secret: {:?}", secret);

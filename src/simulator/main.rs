@@ -1,5 +1,5 @@
-use aggregation::protocols::opa::{OPA, OPASetupParameters};
-use aggregation::simulator::Simulator;
+use jagguar::protocols::opa::{OPA, OPASetupParameters};
+use jagguar::simulator::Simulator;
 
 fn main() {
     // create the simulator
