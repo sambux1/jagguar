@@ -10,6 +10,7 @@ pub struct Communicator {
     listener: Option<TcpListener>,
     shutdown: Option<Arc<AtomicBool>>,
     received_messages: Arc<Mutex<Vec<Vec<u8>>>>,
+    committee_messages: Arc<Mutex<Vec<Vec<u8>>>>,
     signal_callback: Option<Arc<dyn Fn(TcpStream, u16) + Send + Sync>>,
 }
 
@@ -20,6 +21,7 @@ impl Communicator {
             listener: None,
             shutdown: None,
             received_messages: Arc::new(Mutex::new(Vec::new())),
+            committee_messages: Arc::new(Mutex::new(Vec::new())),
             signal_callback: None,
         }
     }
@@ -53,9 +55,10 @@ impl Communicator {
             match self.listener.as_ref().unwrap().accept() {
                 Ok((stream, addr)) => {
                     let messages = Arc::clone(&self.received_messages);
+                    let committee_messages = Arc::clone(&self.committee_messages);
                     let callback = self.signal_callback.clone();
                     thread::spawn(move || {
-                        Self::handle_connection(stream, addr, messages, callback);
+                        Self::handle_connection(stream, addr, messages, committee_messages, callback);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -73,6 +76,7 @@ impl Communicator {
         mut stream: TcpStream,
         addr: SocketAddr,
         messages: Arc<Mutex<Vec<Vec<u8>>>>,
+        committee_messages: Arc<Mutex<Vec<Vec<u8>>>>,
         callback: Option<Arc<dyn Fn(TcpStream, u16) + Send + Sync>>,
     ) {
         // read exactly 6 bytes to check if it's a signal
@@ -91,9 +95,18 @@ impl Communicator {
                 let mut rest = Vec::new();
                 let _ = stream.read_to_end(&mut rest);
                 signal_buffer.extend_from_slice(&rest);
-                let mut messages = messages.lock().unwrap();
-                messages.push(signal_buffer);
-                println!("Received message from {:?} (total: {} messages)", addr, messages.len());
+                
+                // check if it's a committee message
+                if signal_buffer.starts_with(b"committee") {
+                    let mut committee_queue = committee_messages.lock().unwrap();
+                    committee_queue.push(signal_buffer);
+                    println!("Committee message queued (total: {} committee messages)", committee_queue.len());
+                } else {
+                    // regular client message
+                    let mut messages = messages.lock().unwrap();
+                    messages.push(signal_buffer);
+                    println!("Received message from {:?} (total: {} messages)", addr, messages.len());
+                }
             }
             Err(e) => {
                 eprintln!("Failed to read from {:?}: {}", addr, e);
@@ -103,6 +116,10 @@ impl Communicator {
 
     pub fn get_received_messages(&self) -> Arc<Mutex<Vec<Vec<u8>>>> {
         Arc::clone(&self.received_messages)
+    }
+
+    pub fn get_committee_messages(&self) -> Arc<Mutex<Vec<Vec<u8>>>> {
+        Arc::clone(&self.committee_messages)
     }
 
     fn connect_to_server(&self, server_port: u16) -> std::io::Result<TcpStream> {

@@ -23,6 +23,8 @@ fn main() {
 
     std::thread::sleep(std::time::Duration::from_secs(5));
 
+    sim.output();
+
     // teardown the simulator
     sim.teardown();
 }

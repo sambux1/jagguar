@@ -111,8 +111,13 @@ impl<P: Protocol> Simulator<P> {
 			std::thread::spawn(move || {
 				committee_member.retrieve_inputs();
 				committee_member.aggregate();
+				committee_member.send_output();
 			});
 		}
+	}
+
+	pub fn output(&mut self) {
+		println!("Server output: <TODO>");
 	}
 
 	pub fn teardown(&mut self) {

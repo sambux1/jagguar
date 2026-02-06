@@ -1,2 +1,2 @@
 [alias]
-simulator = "run --bin simulator --features simulator"
+simulator = "run --release --bin simulator --features simulator"

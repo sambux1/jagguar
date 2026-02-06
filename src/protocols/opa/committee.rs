@@ -2,13 +2,14 @@ use crate::protocols::committee::Committee;
 use crate::protocols::opa::server::OPAState;
 use crate::communicator::Communicator;
 use crate::crypto::F128;
-use ark_serialize::CanonicalDeserialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::io::{Cursor, Read};
 
 pub struct OPACommittee {
     server_state: Option<OPAState>,
     communicator: Communicator,
     input_shares: Option<Vec<Vec<F128>>>,
+    output_share: Option<Vec<F128>>,
 }
 
 impl Committee for OPACommittee {
@@ -22,6 +23,7 @@ impl Committee for OPACommittee {
             server_state: None,
             communicator,
             input_shares: None,
+            output_share: None,
         }
     }
 
@@ -90,7 +92,21 @@ impl Committee for OPACommittee {
                 output_share[i] = output_share[i] + value;
             }
         }
+
+        self.output_share = Some(output_share.clone());
         
         println!("Aggregated {} shares into output share of length {}", shares.len(), output_share.len());
+    }
+
+    fn send_output(&mut self) {
+        let mut data = Vec::new();
+        // prepend "committee" identifier (8 bytes) so server can distinguish from client messages
+        data.extend_from_slice(b"committee");
+        
+        self.output_share.as_ref().expect("Must call aggregate before send_output")
+            .serialize_compressed(&mut data).expect("Failed to serialize output share");
+        
+        self.communicator.send_to_server(self.server_state.as_ref().unwrap().port, &data)
+            .expect("Failed to send output share to server");
     }
 }
