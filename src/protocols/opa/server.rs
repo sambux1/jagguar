@@ -1,5 +1,5 @@
 use crate::protocols::server::Server;
-use crate::crypto::SeedHomomorphicPRG;
+use crate::crypto::{SeedHomomorphicPRG, shamir::Shamir};
 use crate::crypto::prg::populate_random_bytes;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -7,6 +7,7 @@ use crate::communicator::Communicator;
 use crate::crypto::F128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::net::TcpStream;
+use std::io::Cursor;
 
 #[derive(Copy, Clone)]
 pub struct OPASetupParameters {
@@ -59,7 +60,7 @@ impl OPAServer {
         
         for raw_msg in &raw_messages {
             // deserialize the client message: (masked_input, shares)
-            let mut cursor = std::io::Cursor::new(raw_msg);
+			let mut cursor = Cursor::new(raw_msg);
             let _masked_input = Vec::<F128>::deserialize_compressed(&mut cursor)
                 .expect("Failed to deserialize masked_input");
             let shares = Vec::<Vec<F128>>::deserialize_compressed(&mut cursor)
@@ -84,6 +85,57 @@ impl OPAServer {
             eprintln!("Failed to send data to committee member {}: {}", committee_index, e);
         }
     }
+
+	fn on_committee_complete(state: OPAState, messages: Vec<Vec<u8>>) {
+        println!("Performing final aggregation with {} committee messages", messages.len());
+
+        // extract the secret shares from the committee messages
+        let mut committee_outputs: Vec<Vec<F128>> = Vec::with_capacity(messages.len());
+        for msg in messages {
+            if msg.len() < 9 || &msg[..9] != b"committee" {
+                eprintln!("Malformed committee message; missing prefix");
+                continue;
+            }
+            let mut cursor = Cursor::new(&msg[9..]);
+            match Vec::<F128>::deserialize_compressed(&mut cursor) {
+                Ok(vec) => committee_outputs.push(vec),
+                Err(e) => eprintln!("Failed to deserialize committee output share: {}", e),
+            }
+        }
+
+        if committee_outputs.len() < state.reconstruction_threshold as usize {
+            eprintln!("Not enough committee outputs to reconstruct the SHPRG seed");
+            return;
+        }
+
+        // reconstruct the SHPRG seed from the secret shares
+        let shamir = Shamir::<F128>::new(
+            state.committee_size as usize,
+            state.reconstruction_threshold as usize
+        );
+        let seed_len = committee_outputs[0].len();
+        let mut reconstructed_seed: Vec<F128> = Vec::with_capacity(seed_len);
+        for j in 0..seed_len {
+            // build (x_i, y_{i,j}) pairs across parties i for seed component j
+            let mut pairs: Vec<(F128, F128)> = Vec::with_capacity(committee_outputs.len());
+            for (i, share_vec) in committee_outputs.iter().enumerate() {
+                let x = F128::from((i as u64) + 1);
+                let y = share_vec[j];
+                pairs.push((x, y));
+            }
+            let s = shamir.reconstruct(&pairs).expect("Shamir reconstruction failed");
+            reconstructed_seed.push(s);
+        }
+        println!("Reconstructed SHPRG seed of length {}", reconstructed_seed.len());
+
+        // expand the SHPRG seed
+
+        // aggregate input ciphertexts
+
+        // unmask the aggregated ciphertext
+
+        // decode the unmasked aggregated ciphertext to obtain the output
+	}
 }
 
 impl Server for OPAServer {
@@ -162,6 +214,15 @@ impl Server for OPAServer {
             let inputs = messages.lock().unwrap().clone();
             Self::send_to_committee(stream, inputs, port);
         });
+
+		// Configure auto-trigger for final aggregation when all committee outputs are received
+		let expected = self.state.committee_size as usize;
+		self.get_communicator().set_committee_expected_size(expected);
+		let state_for_aggregation = self.state.clone();
+		self.get_communicator().set_committee_complete_callback(move |msgs| {
+			println!("Auto-triggering final aggregation with {} committee messages", msgs.len());
+			Self::on_committee_complete(state_for_aggregation.clone(), msgs);
+		});
     }
 
     fn get_state(&self) -> &Self::State {
