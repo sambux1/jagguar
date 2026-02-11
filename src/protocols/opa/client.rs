@@ -22,6 +22,15 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
         self.input.as_ref()
     }
 
+    /// Helper for tests and debugging: decode an encoded (already unmasked)
+    /// aggregate using the client's view of the server state.
+    pub fn decode_output(&self, output: Vec<u128>) -> Vec<u32> {
+        self.server_state
+            .as_ref()
+            .expect("OPA client server state must be set.")
+            .decode_output(output)
+    }
+
     pub fn setup(&self) {
         // setup the client
     }

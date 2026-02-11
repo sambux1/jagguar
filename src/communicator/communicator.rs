@@ -30,6 +30,10 @@ impl Communicator {
         }
     }
 
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
     pub fn set_signal_callback<F>(&mut self, callback: F)
     where
         F: Fn(TcpStream, u16) + Send + Sync + 'static,

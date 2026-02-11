@@ -54,10 +54,12 @@ pub struct OPAServer {
     communicator: Option<Communicator>,
 }
 
-impl OPAServer {
-    fn decode_output(state: &OPAState, output: Vec<u128>) -> Vec<u32> {
+impl OPAState {
+    /// Decode a packed, masked aggregate back into a vector of u32s.
+    /// This is shared between the server logic and tests/clients.
+    pub fn decode_output(&self, output: Vec<u128>) -> Vec<u32> {
         // compute 2^kappa and (2^kappa * n)
-        let kappa: u32 = state.security_parameter as u32;
+        let kappa: u32 = self.security_parameter as u32;
         let two_to_kappa: u128 = 1u128 << kappa;
         let two_to_kappa_times_n: u128 = two_to_kappa * (NUM_PARTIES_UPPER_BOUND as u128);
 
@@ -77,6 +79,13 @@ impl OPAServer {
         
         // return the decoded output
         result
+    }
+
+}
+
+impl OPAServer {
+    fn decode_output(state: &OPAState, output: Vec<u128>) -> Vec<u32> {
+        state.decode_output(output)
     }
 
     fn send_to_committee(tcp_stream: TcpStream, raw_messages: Vec<Vec<u8>>, port: u16) {
@@ -116,16 +125,23 @@ impl OPAServer {
 	fn on_committee_complete(state: OPAState, committee_messages: Vec<Vec<u8>>, client_messages: Vec<Vec<u8>>) {
         println!("Performing final aggregation with {} committee messages", committee_messages.len());
 
-        // extract the secret shares from the committee messages
-        let mut committee_outputs: Vec<Vec<F128>> = Vec::with_capacity(committee_messages.len());
+        // extract the secret shares from the committee messages, along with their indices
+        // so we can use the correct x-coordinates in Shamir reconstruction.
+        let mut committee_outputs: Vec<(usize, Vec<F128>)> =
+            Vec::with_capacity(committee_messages.len());
         for msg in committee_messages {
-            if msg.len() < 9 || &msg[..9] != b"committee" {
+            // format: "committee" (9 bytes) || index (u16 LE) || compressed Vec<F128>
+            if msg.len() < 11 || &msg[..9] != b"committee" {
                 eprintln!("Malformed committee message; missing prefix");
                 continue;
             }
-            let mut cursor = Cursor::new(&msg[9..]);
+            let index_bytes = &msg[9..11];
+            let committee_index =
+                u16::from_le_bytes([index_bytes[0], index_bytes[1]]) as usize;
+
+            let mut cursor = Cursor::new(&msg[11..]);
             match Vec::<F128>::deserialize_compressed(&mut cursor) {
-                Ok(vec) => committee_outputs.push(vec),
+                Ok(vec) => committee_outputs.push((committee_index, vec)),
                 Err(e) => eprintln!("Failed to deserialize committee output share: {}", e),
             }
         }
@@ -140,13 +156,14 @@ impl OPAServer {
             state.committee_size as usize,
             state.reconstruction_threshold as usize
         );
-        let seed_len = committee_outputs[0].len();
+        let seed_len = committee_outputs[0].1.len();
         let mut reconstructed_seed: Vec<F128> = Vec::with_capacity(seed_len);
         for j in 0..seed_len {
             // build (x_i, y_{i,j}) pairs across parties i for seed component j
             let mut pairs: Vec<(F128, F128)> = Vec::with_capacity(committee_outputs.len());
-            for (i, share_vec) in committee_outputs.iter().enumerate() {
-                let x = F128::from((i as u64) + 1);
+            for (idx, share_vec) in committee_outputs.iter() {
+                // x-coordinate is fixed by how Shamir sharing was created: x = index + 1
+                let x = F128::from((*idx as u64) + 1);
                 let y = share_vec[j];
                 pairs.push((x, y));
             }

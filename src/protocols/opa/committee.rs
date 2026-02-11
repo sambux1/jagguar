@@ -100,11 +100,25 @@ impl Committee for OPACommittee {
 
     fn send_output(&mut self) {
         let mut data = Vec::new();
-        // prepend "committee" identifier (8 bytes) so server can distinguish from client messages
+        // prepend "committee" identifier so server can distinguish from client messages
         data.extend_from_slice(b"committee");
+
+        // also include this committee's index so the server can use the correct
+        // x-coordinate when running Shamir reconstruction
+        let server_port = self.server_state.as_ref().unwrap().port;
+        let local_port = self.communicator.port();
+        // ports are allocated as STARTING_PORT for server, then offsets 1..=committee_size
+        // so index = local_port - server_port - 1
+        let committee_index: u16 = local_port
+            .checked_sub(server_port + 1)
+            .expect("Invalid committee port configuration") as u16;
+        data.extend_from_slice(&committee_index.to_le_bytes());
         
-        self.output_share.as_ref().expect("Must call aggregate before send_output")
-            .serialize_compressed(&mut data).expect("Failed to serialize output share");
+        self.output_share
+            .as_ref()
+            .expect("Must call aggregate before send_output")
+            .serialize_compressed(&mut data)
+            .expect("Failed to serialize output share");
         
         self.communicator.send_to_server(self.server_state.as_ref().unwrap().port, &data)
             .expect("Failed to send output share to server");
