@@ -70,7 +70,8 @@ impl<P: Protocol> Simulator<P> {
 				// generate a random input
 				let mut rng = default_prg();
 				let mut input = vec![0u32; INPUT_LEN];
-				populate_random(&mut input, &mut rng);
+				// TODO: uncomment to test with real inputs, using zeros for now
+				//populate_random(&mut input, &mut rng);
 				let input: Vec<P::Input> = input.into_iter().map(|x| x.into()).collect();
 
 				// set the client's input

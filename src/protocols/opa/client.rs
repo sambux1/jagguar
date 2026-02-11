@@ -2,7 +2,7 @@ use crate::protocols::client::Client;
 use crate::protocols::opa::server::OPAState;
 use crate::crypto::{F128, SeedHomomorphicPRG, Shamir};
 use crate::crypto::prg::{populate_random, default_prg};
-use crate::util::packing::{pack_vector, unpack_vector};
+use crate::util::packing::pack_vector;
 use crate::communicator::Communicator;
 use ark_serialize::CanonicalSerialize;
 
@@ -59,33 +59,6 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
         
         // return the encoded input
         encoded
-    }
-
-    fn decode_output(&self, output: Vec<u128>) -> Vec<T>
-    where
-        T: num_traits::FromPrimitive,
-    {
-        // compute 2^kappa and (2^kappa * n)
-        let kappa: u32 = self.server_state.as_ref().unwrap().security_parameter as u32;
-        let two_to_kappa: u128 = 1u128 << kappa;
-        let two_to_kappa_times_n: u128 = two_to_kappa * (NUM_PARTIES_UPPER_BOUND as u128);
-
-        // decoded = ceil(encoded / (2^kappa * n)) - 1
-        let denom = two_to_kappa_times_n as u128;
-        let decoded: Vec<u32> = output.iter()
-            .map(|x| {
-                let q = x / denom;
-                let r = x % denom;
-                let ceil = q + if r != 0 { 1 } else { 0 };
-                (ceil as u32) - 1
-            })
-            .collect();
- 
-        // unpack the elements of the decoded vector into the target type
-        let result: Vec<T> = unpack_vector(&decoded);
-        
-        // return the decoded output
-        result
     }
 }
 

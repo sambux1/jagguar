@@ -8,6 +8,9 @@ use crate::crypto::F128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::net::TcpStream;
 use std::io::Cursor;
+use crate::crypto::util::field_to_128;
+use crate::util::packing::unpack_vector;
+use crate::protocols::opa::client::NUM_PARTIES_UPPER_BOUND;
 
 #[derive(Copy, Clone)]
 pub struct OPASetupParameters {
@@ -52,6 +55,30 @@ pub struct OPAServer {
 }
 
 impl OPAServer {
+    fn decode_output(state: &OPAState, output: Vec<u128>) -> Vec<u32> {
+        // compute 2^kappa and (2^kappa * n)
+        let kappa: u32 = state.security_parameter as u32;
+        let two_to_kappa: u128 = 1u128 << kappa;
+        let two_to_kappa_times_n: u128 = two_to_kappa * (NUM_PARTIES_UPPER_BOUND as u128);
+
+        // decoded = ceil(encoded / (2^kappa * n)) - 1
+        let denom = two_to_kappa_times_n as u128;
+        let decoded: Vec<u32> = output.iter()
+            .map(|x| {
+                let q = x / denom;
+                let r = x % denom;
+                let ceil = q + if r != 0 { 1 } else { 0 };
+                (ceil as u32) - 1
+            })
+            .collect();
+ 
+        // unpack the elements of the decoded vector into the target type
+        let result: Vec<u32> = unpack_vector(&decoded);
+        
+        // return the decoded output
+        result
+    }
+
     fn send_to_committee(tcp_stream: TcpStream, raw_messages: Vec<Vec<u8>>, port: u16) {
         let committee_index = port - 10001; // TODO: this should be a constant/partyID
 
@@ -86,12 +113,12 @@ impl OPAServer {
         }
     }
 
-	fn on_committee_complete(state: OPAState, messages: Vec<Vec<u8>>) {
-        println!("Performing final aggregation with {} committee messages", messages.len());
+	fn on_committee_complete(state: OPAState, committee_messages: Vec<Vec<u8>>, client_messages: Vec<Vec<u8>>) {
+        println!("Performing final aggregation with {} committee messages", committee_messages.len());
 
         // extract the secret shares from the committee messages
-        let mut committee_outputs: Vec<Vec<F128>> = Vec::with_capacity(messages.len());
-        for msg in messages {
+        let mut committee_outputs: Vec<Vec<F128>> = Vec::with_capacity(committee_messages.len());
+        for msg in committee_messages {
             if msg.len() < 9 || &msg[..9] != b"committee" {
                 eprintln!("Malformed committee message; missing prefix");
                 continue;
@@ -129,12 +156,39 @@ impl OPAServer {
         println!("Reconstructed SHPRG seed of length {}", reconstructed_seed.len());
 
         // expand the SHPRG seed
+        let shprg = SeedHomomorphicPRG::new_from_both_seeds(state.succinct_seed, reconstructed_seed);
+        let mask = shprg.expand();
+        println!("Expanded SHPRG mask of length {}", mask.len());
 
         // aggregate input ciphertexts
+        let mut client_iter = client_messages.into_iter();
+        let first_raw = client_iter.next().unwrap();
+        let mut cursor = Cursor::new(&first_raw);
+        let mut aggregated_ciphertext = Vec::<F128>::deserialize_compressed(&mut cursor).unwrap();
+        let mut num_clients = 1usize;
+        for raw in client_iter {
+            let mut c = Cursor::new(&raw);
+            let masked_input = Vec::<F128>::deserialize_compressed(&mut c).unwrap();
+            for (i, v) in masked_input.iter().enumerate() {
+                aggregated_ciphertext[i] = aggregated_ciphertext[i] + *v;
+            }
+            num_clients += 1;
+        }
+        println!("Aggregated masked ciphertext from {} clients", num_clients);
+        println!("Aggregated masked ciphertext length: {}", aggregated_ciphertext.len());
 
         // unmask the aggregated ciphertext
+        let mut unmasked = aggregated_ciphertext.clone();
+        for i in 0..1024 {
+            unmasked[i] = unmasked[i] - mask[i];
+        }
+        println!("Unmasked aggregated ciphertext length: {}", unmasked.len());
 
         // decode the unmasked aggregated ciphertext to obtain the output
+        let unmasked_u128: Vec<u128> = unmasked.into_iter().map(|x| field_to_128(x)).collect();
+        let decoded = Self::decode_output(&state, unmasked_u128);
+        println!("Decoded output length: {}", decoded.len());
+        println!("Decoded output: {:?}", decoded);
 	}
 }
 
@@ -219,9 +273,11 @@ impl Server for OPAServer {
 		let expected = self.state.committee_size as usize;
 		self.get_communicator().set_committee_expected_size(expected);
 		let state_for_aggregation = self.state.clone();
+		let client_messages_arc = self.get_communicator().get_received_messages();
 		self.get_communicator().set_committee_complete_callback(move |msgs| {
 			println!("Auto-triggering final aggregation with {} committee messages", msgs.len());
-			Self::on_committee_complete(state_for_aggregation.clone(), msgs);
+			let client_messages = client_messages_arc.lock().unwrap().clone();
+			Self::on_committee_complete(state_for_aggregation.clone(), msgs, client_messages);
 		});
     }
 
