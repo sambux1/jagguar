@@ -25,8 +25,6 @@ fn main() {
 
     sim.output();
 
-    std::thread::sleep(std::time::Duration::from_secs(2));
-
     // teardown the simulator
     sim.teardown();
 }

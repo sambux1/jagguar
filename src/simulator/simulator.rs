@@ -14,6 +14,8 @@ pub struct Simulator<P: Protocol> {
 	server_shutdown: Option<Arc<AtomicBool>>,
 	server_state: Option<<P::Server as Server>::State>,
 	committee_port_offsets: Option<Vec<u16>>,
+	/// Optional channel used by the server to send its final output back to the simulator
+	server_output: Option<mpsc::Receiver<Vec<u32>>>,
 	_marker: core::marker::PhantomData<(P, P::Server, P::Client, P::Committee)>,
 }
 
@@ -23,6 +25,7 @@ impl<P: Protocol> Simulator<P> {
 			server_shutdown: Some(Arc::new(AtomicBool::new(false))),
 			server_state: None,
 			committee_port_offsets: None,
+			server_output: None,
 			_marker: core::marker::PhantomData,
 		}
 	}
@@ -38,8 +41,14 @@ impl<P: Protocol> Simulator<P> {
 		// create a channel to send the server state back to the simulator
 		let (state_sender, state_receiver) = mpsc::channel();
 
+		// create a channel for the server to send its final output back
+		let (output_sender, output_receiver) = mpsc::channel();
+		self.server_output = Some(output_receiver);
+
 		// create server before running it in a thread
 		let mut server = P::Server::new(server_parameters);
+		// allow the server to use the output channel if it chooses to
+		server.set_output_channel(output_sender);
 		self.committee_port_offsets = Some(server.get_committee_port_offsets());
 
 		// run the server in a thread
@@ -121,7 +130,22 @@ impl<P: Protocol> Simulator<P> {
 	}
 
 	pub fn output(&mut self) {
-		println!("Server output: <TODO>");
+		match self.server_output {
+			Some(ref receiver) => match receiver.try_recv() {
+				Ok(output) => {
+					println!("Server output ({} values): {:?}", output.len(), output);
+				}
+				Err(mpsc::TryRecvError::Empty) => {
+					println!("Server output: <no output available yet>");
+				}
+				Err(mpsc::TryRecvError::Disconnected) => {
+					println!("Server output channel disconnected");
+				}
+			},
+			None => {
+				println!("Server output receiver not configured");
+			}
+		}
 	}
 
 	pub fn teardown(&mut self) {

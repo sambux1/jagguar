@@ -11,6 +11,7 @@ use std::io::Cursor;
 use crate::crypto::util::field_to_128;
 use crate::util::packing::unpack_vector;
 use crate::protocols::opa::client::NUM_PARTIES_UPPER_BOUND;
+use std::sync::mpsc;
 
 #[derive(Copy, Clone)]
 pub struct OPASetupParameters {
@@ -45,6 +46,11 @@ pub struct OPAState {
     pub committee_size: u64,
     pub committee_port_offsets: Vec<u16>,
     pub port: u16,
+    /// Optional channel for sending decoded output back to the simulator.
+    pub output_sender: Option<mpsc::Sender<Vec<u32>>>,
+    /// Optional cache of messages used during aggregation.
+    pub client_messages: Vec<Vec<u8>>,
+    pub committee_messages: Vec<Vec<u8>>,
 }
 
 pub struct OPAServer {
@@ -122,7 +128,141 @@ impl OPAServer {
         }
     }
 
-	fn on_committee_complete(state: OPAState, committee_messages: Vec<Vec<u8>>, client_messages: Vec<Vec<u8>>) {
+    /// Called when all committee outputs have been received. This stores the
+    /// messages into the state and runs aggregation.
+	fn on_committee_complete(mut state: OPAState, committee_messages: Vec<Vec<u8>>, client_messages: Vec<Vec<u8>>) {
+        // Store the messages into the state
+        state.committee_messages = committee_messages;
+        state.client_messages = client_messages;
+        
+        // Run aggregation directly using the state - clean and simple!
+        OPAServer::aggregate(&state);
+	}
+}
+
+impl Server for OPAServer {
+    type SetupParameters = OPASetupParameters;
+    type State = OPAState;
+    
+    fn new(setup_parameters: OPASetupParameters) -> Self {
+        // default initialization, delegate real work to setup function
+        let mut server = Self {
+            setup_parameters,
+            state: OPAState {
+                succinct_seed: [0u8; 32],
+                security_parameter: 0,
+                corruption_threshold: 0,
+                reconstruction_threshold: 0,
+                committee_size: 0,
+                committee_port_offsets: Vec::new(),
+                port: 0,
+                output_sender: None,
+                client_messages: Vec::new(),
+                committee_messages: Vec::new(),
+            },
+            public_parameter: Vec::new(),
+            communicator: None,
+        };
+        server.setup(server.setup_parameters);
+        server
+    }
+
+    fn set_communicator(&mut self, comm: Communicator) {
+        self.communicator = Some(comm);
+    }
+
+    fn get_communicator(&mut self) -> &mut Communicator {
+        self.communicator.as_mut().unwrap()
+    }
+
+    fn setup(&mut self, args: Self::SetupParameters) {
+        self.setup_parameters = args;
+
+        // sample the public parameter seed
+        let mut rng = ChaCha20Rng::from_entropy();
+        let mut succinct_seed = [0u8; 32];
+        populate_random_bytes(&mut succinct_seed, &mut rng);
+
+        // sample the committee ports
+        // TODO: currently just uses port offsets 1 through committee_size
+        let mut committee_port_offsets = Vec::<u16>::new();
+        for i in 1..=self.setup_parameters.committee_size as u16 {
+            committee_port_offsets.push(i);
+        }
+
+        // preserve any existing output sender when refreshing the public state
+        let output_sender = self.state.output_sender.clone();
+        let client_messages = self.state.client_messages.clone();
+        let committee_messages = self.state.committee_messages.clone();
+
+        // set the public state
+        self.state = OPAState {
+            succinct_seed,
+            security_parameter: self.setup_parameters.security_parameter,
+            corruption_threshold: self.setup_parameters.corruption_threshold,
+            reconstruction_threshold: self.setup_parameters.reconstruction_threshold,
+            committee_size: self.setup_parameters.committee_size,
+            committee_port_offsets,
+            port: 0,
+            output_sender,
+            client_messages,
+            committee_messages,
+        };
+
+        // sample the public parameter from the succinct seed
+        let shprg = SeedHomomorphicPRG::new_from_public_seed(succinct_seed);
+        let public_parameter = shprg.get_public_parameter();
+        self.public_parameter = public_parameter.clone();
+    }
+
+    fn on_communicator_setup(&mut self, port: u16) {
+        self.state.port = port;
+        
+        // Capture the received_messages Arc so the callback can access it
+        let messages = self.get_communicator().get_received_messages();
+        
+        // Set up the callback to gather inputs and send them through the stream
+        self.get_communicator().set_signal_callback(move |stream, port| {
+            println!("Signal handler called in server");
+            let inputs = messages.lock().unwrap().clone();
+            Self::send_to_committee(stream, inputs, port);
+        });
+
+		// Configure auto-trigger for final aggregation when all committee outputs are received
+		let expected = self.state.committee_size as usize;
+		self.get_communicator().set_committee_expected_size(expected);
+		let state_for_callback = self.state.clone();
+		let client_messages_arc = self.get_communicator().get_received_messages();
+		self.get_communicator().set_committee_complete_callback(move |msgs| {
+			println!("Auto-triggering final aggregation with {} committee messages", msgs.len());
+			let client_messages = client_messages_arc.lock().unwrap().clone();
+			Self::on_committee_complete(state_for_callback.clone(), msgs, client_messages);
+		});
+    }
+
+    fn get_state(&self) -> &Self::State {
+        &self.state
+    }
+
+    fn get_committee_port_offsets(&self) -> Vec<u16> {
+        self.state.committee_port_offsets.clone()
+    }
+
+    fn set_output_channel(&mut self, sender: mpsc::Sender<Vec<u32>>) {
+        self.state.output_sender = Some(sender);
+    }
+
+    fn aggregate(state: &OPAState) {
+        // Aggregate using the provided state. This assumes that
+        // `client_messages` and `committee_messages` have been populated already.
+        if state.committee_messages.is_empty() || state.client_messages.is_empty() {
+            eprintln!("aggregate() called but messages are not populated; skipping.");
+            return;
+        }
+
+        let committee_messages = state.committee_messages.clone();
+        let client_messages = state.client_messages.clone();
+
         println!("Performing final aggregation with {} committee messages", committee_messages.len());
 
         // extract the secret shares from the committee messages, along with their indices
@@ -205,108 +345,13 @@ impl OPAServer {
         let unmasked_u128: Vec<u128> = unmasked.into_iter().map(|x| field_to_128(x)).collect();
         let decoded = Self::decode_output(&state, unmasked_u128);
         println!("Decoded output length: {}", decoded.len());
-        println!("Decoded output: {:?}", decoded);
-	}
-}
 
-impl Server for OPAServer {
-    type SetupParameters = OPASetupParameters;
-    type State = OPAState;
-    
-    fn new(setup_parameters: OPASetupParameters) -> Self {
-        // default initialization, delegate real work to setup function
-        let mut server = Self {
-            setup_parameters,
-            state: OPAState {
-                succinct_seed: [0u8; 32],
-                security_parameter: 0,
-                corruption_threshold: 0,
-                reconstruction_threshold: 0,
-                committee_size: 0,
-                committee_port_offsets: Vec::new(),
-                port: 0,
-            },
-            public_parameter: Vec::new(),
-            communicator: None,
-        };
-        server.setup(server.setup_parameters);
-        server
-    }
-
-    fn set_communicator(&mut self, comm: Communicator) {
-        self.communicator = Some(comm);
-    }
-
-    fn get_communicator(&mut self) -> &mut Communicator {
-        self.communicator.as_mut().unwrap()
-    }
-
-    fn setup(&mut self, args: Self::SetupParameters) {
-        self.setup_parameters = args;
-
-        // sample the public parameter seed
-        let mut rng = ChaCha20Rng::from_entropy();
-        let mut succinct_seed = [0u8; 32];
-        populate_random_bytes(&mut succinct_seed, &mut rng);
-
-        // sample the committee ports
-        // TODO: currently just uses port offsets 1 through committee_size
-        let mut committee_port_offsets = Vec::<u16>::new();
-        for i in 1..=self.setup_parameters.committee_size as u16 {
-            committee_port_offsets.push(i);
+        // If an output channel was configured in the server state, send the
+        // decoded output back to the simulator.
+        if let Some(ref sender) = state.output_sender {
+            if let Err(e) = sender.send(decoded.clone()) {
+                eprintln!("Failed to send decoded output over channel: {}", e);
+            }
         }
-
-        // set the public state
-        self.state = OPAState {
-            succinct_seed,
-            security_parameter: self.setup_parameters.security_parameter,
-            corruption_threshold: self.setup_parameters.corruption_threshold,
-            reconstruction_threshold: self.setup_parameters.reconstruction_threshold,
-            committee_size: self.setup_parameters.committee_size,
-            committee_port_offsets,
-            port: 0,
-        };
-
-        // sample the public parameter from the succinct seed
-        let shprg = SeedHomomorphicPRG::new_from_public_seed(succinct_seed);
-        let public_parameter = shprg.get_public_parameter();
-        self.public_parameter = public_parameter.clone();
-    }
-
-    fn on_communicator_setup(&mut self, port: u16) {
-        self.state.port = port;
-        
-        // Capture the received_messages Arc so the callback can access it
-        let messages = self.get_communicator().get_received_messages();
-        
-        // Set up the callback to gather inputs and send them through the stream
-        self.get_communicator().set_signal_callback(move |stream, port| {
-            println!("Signal handler called in server");
-            let inputs = messages.lock().unwrap().clone();
-            Self::send_to_committee(stream, inputs, port);
-        });
-
-		// Configure auto-trigger for final aggregation when all committee outputs are received
-		let expected = self.state.committee_size as usize;
-		self.get_communicator().set_committee_expected_size(expected);
-		let state_for_aggregation = self.state.clone();
-		let client_messages_arc = self.get_communicator().get_received_messages();
-		self.get_communicator().set_committee_complete_callback(move |msgs| {
-			println!("Auto-triggering final aggregation with {} committee messages", msgs.len());
-			let client_messages = client_messages_arc.lock().unwrap().clone();
-			Self::on_committee_complete(state_for_aggregation.clone(), msgs, client_messages);
-		});
-    }
-
-    fn get_state(&self) -> &Self::State {
-        &self.state
-    }
-
-    fn get_committee_port_offsets(&self) -> Vec<u16> {
-        self.state.committee_port_offsets.clone()
-    }
-
-    fn aggregate(&self) {
-        // aggregate the inputs
     }
 }
