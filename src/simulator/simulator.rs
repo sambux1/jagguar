@@ -16,6 +16,10 @@ pub struct Simulator<P: Protocol> {
 	committee_port_offsets: Option<Vec<u16>>,
 	/// Optional channel used by the server to send its final output back to the simulator
 	server_output: Option<mpsc::Receiver<Vec<u32>>>,
+	/// Channel used by clients to send their randomly chosen inputs back to the simulator
+	client_input_channel: Option<mpsc::Receiver<Vec<u32>>>,
+	/// Expected output: elementwise sum of all client inputs
+	expected_output: Option<Vec<u64>>,
 	_marker: core::marker::PhantomData<(P, P::Server, P::Client, P::Committee)>,
 }
 
@@ -26,6 +30,8 @@ impl<P: Protocol> Simulator<P> {
 			server_state: None,
 			committee_port_offsets: None,
 			server_output: None,
+			client_input_channel: None,
+			expected_output: None,
 			_marker: core::marker::PhantomData,
 		}
 	}
@@ -67,6 +73,10 @@ impl<P: Protocol> Simulator<P> {
 		P::Client: Send + 'static,
 		P::Input: From<u32>,
 	{
+		// create a channel for clients to send their inputs back to the simulator
+		let (input_sender, input_receiver) = mpsc::channel();
+		self.client_input_channel = Some(input_receiver);
+
 		let mut port = STARTING_PORT;
 		// create the clients
 		for _ in 0..num_clients {
@@ -74,16 +84,20 @@ impl<P: Protocol> Simulator<P> {
 
 			let mut client = P::Client::new();
 			client.set_server_state(self.server_state.as_ref().unwrap().clone());
+			let sender = input_sender.clone();
 
 			std::thread::spawn(move || {
 				// generate a random input
 				let mut rng = default_prg();
 				let mut input = vec![0u32; INPUT_LEN];
-				// TODO: uncomment to test with real inputs, using iota for now
-				//populate_random(&mut input, &mut rng);
-				for i in 0..INPUT_LEN {
-					input[i] = i as u32;
-				}
+
+				// generate random input, masked to the range [0, 2^20)
+				populate_random(&mut input, &mut rng);
+				input = input.iter().map(|x| x % (1 << 20) as u32).collect();
+				
+				// send the input to the simulator (non-blocking for unbounded channel)
+				let _ = sender.send(input.clone());
+				
 				let input: Vec<P::Input> = input.into_iter().map(|x| x.into()).collect();
 
 				// set the client's input
@@ -129,11 +143,72 @@ impl<P: Protocol> Simulator<P> {
 		}
 	}
 
+	pub fn collect_client_inputs(&mut self, expected_count: usize) -> Vec<Vec<u32>> {
+		let mut inputs = Vec::new();
+		if let Some(ref receiver) = self.client_input_channel {
+			// loop over all received messages until we have all expected inputs
+			// or until the channel is disconnected
+			while inputs.len() < expected_count {
+				match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+					Ok(input) => {
+						inputs.push(input);
+					}
+					Err(mpsc::RecvTimeoutError::Timeout) => {
+						// continue waiting if we haven't received all inputs yet
+						continue;
+					}
+					Err(mpsc::RecvTimeoutError::Disconnected) => {
+						// channel disconnected, break and return what we have
+						break;
+					}
+				}
+			}
+		}
+		
+		// compute elementwise sum over all client inputs
+		let sum: Vec<u64> = if inputs.is_empty() {
+			Vec::new()
+		} else {
+			let len = inputs[0].len();
+			(0..len)
+				.map(|i| {
+					inputs
+						.iter()
+						.map(|input| input[i] as u64)
+						.sum()
+				})
+				.collect()
+		};
+		
+		// store the expected output
+		self.expected_output = Some(sum);
+		
+		inputs
+	}
+
 	pub fn output(&mut self) {
 		match self.server_output {
 			Some(ref receiver) => match receiver.try_recv() {
 				Ok(output) => {
-					println!("Server output ({} values): {:?}", output.len(), output);
+					// compare with expected output
+					if let Some(ref expected) = self.expected_output {
+						if output.len() == expected.len() {
+							let matches = output
+								.iter()
+								.zip(expected.iter())
+								.all(|(&actual, &expected)| actual as u64 == expected);
+							
+							if matches {
+								println!("Output matches expected sum!");
+							} else {
+								println!("Output does NOT match expected sum!");
+							}
+						} else {
+							println!("Output length mismatch! Expected {} values, got {}", expected.len(), output.len());
+						}
+					} else {
+						println!("Warning: No expected output available for comparison");
+					}
 				}
 				Err(mpsc::TryRecvError::Empty) => {
 					println!("Server output: <no output available yet>");

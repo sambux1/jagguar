@@ -11,7 +11,13 @@ fn main() {
     sim.start_server(server_parameters);
 
     // create many clients
-    sim.start_clients(25);
+    let num_clients = 25;
+    sim.start_clients(num_clients);
+
+    // collect all client inputs from the channel
+    // loop over all received messages and add them to a list
+    let client_inputs = sim.collect_client_inputs(num_clients);
+    println!("Collected {} client inputs", client_inputs.len());
 
     println!("Running the simulator...");
 
@@ -21,7 +27,7 @@ fn main() {
     // connect the committee members, disjoint from clients
     sim.start_committee();
 
-    std::thread::sleep(std::time::Duration::from_secs(5));
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
     sim.output();
 
