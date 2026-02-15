@@ -1,0 +1,13 @@
+site_name: Jagguar
+docs_dir: content/
+nav:
+  - Home: index.md
+  - Simulator: simulator.md
+  - Roadmap: roadmap.md
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+theme:
+  name: readthedocs
+
