@@ -3,11 +3,13 @@ use crate::protocols::server::Server;
 use crate::protocols::client::Client;
 use crate::protocols::committee::Committee;
 use crate::crypto::prg::{default_prg, populate_random};
+use crate::simulator::port_pool::PortPool;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc;
 
 const STARTING_PORT: u16 = 10000;
+const DEFAULT_MAX_PORTS: usize = 1000;
 const INPUT_LEN: usize = 1024;
 
 pub struct Simulator<P: Protocol> {
@@ -20,6 +22,8 @@ pub struct Simulator<P: Protocol> {
 	client_input_channel: Option<mpsc::Receiver<Vec<u32>>>,
 	/// Expected output: elementwise sum of all client inputs
 	expected_output: Option<Vec<u64>>,
+	/// Port pool for managing port allocation and status
+	port_pool: PortPool,
 	_marker: core::marker::PhantomData<(P, P::Server, P::Client, P::Committee)>,
 }
 
@@ -32,6 +36,7 @@ impl<P: Protocol> Simulator<P> {
 			server_output: None,
 			client_input_channel: None,
 			expected_output: None,
+			port_pool: PortPool::new(STARTING_PORT, DEFAULT_MAX_PORTS),
 			_marker: core::marker::PhantomData,
 		}
 	}
@@ -58,8 +63,9 @@ impl<P: Protocol> Simulator<P> {
 		self.committee_port_offsets = Some(server.get_committee_port_offsets());
 
 		// run the server in a thread
+		let port = self.port_pool.allocate_port().unwrap();
 		std::thread::spawn(move || {
-			server.setup_communicator(STARTING_PORT, shutdown, state_sender);
+			server.setup_communicator(port, shutdown, state_sender);
 		});
 
 		// wait for server to be ready and receive the state
@@ -77,10 +83,9 @@ impl<P: Protocol> Simulator<P> {
 		let (input_sender, input_receiver) = mpsc::channel();
 		self.client_input_channel = Some(input_receiver);
 
-		let mut port = STARTING_PORT;
 		// create the clients
 		for _ in 0..num_clients {
-			port += 1;
+			let port = self.port_pool.allocate_port().unwrap();
 
 			let mut client = P::Client::new();
 			client.set_server_state(self.server_state.as_ref().unwrap().clone());
