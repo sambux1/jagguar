@@ -1,38 +1,23 @@
-use ark_ff::{Field, PrimeField};
-use num_bigint::BigUint;
-use num_traits::ToPrimitive;
+use ark_ff::PrimeField;
 
-// Multiply a matrix (rows of field elements) by a vector over the same field.
-pub fn matrix_vector_multiplication<F: Field>(matrix: &Vec<Vec<F>>, vector: &Vec<F>) -> Vec<F> {
+// Multiply a matrix (rows of u128) by a vector over Z_{2^128}.
+// Each multiplication wraps modulo 2^128; the sum also wraps — i.e. arithmetic in Z_{2^128}.
+pub fn matrix_vector_multiplication(matrix: &Vec<Vec<u128>>, vector: &Vec<u128>) -> Vec<u128> {
     let mut out = Vec::with_capacity(matrix.len());
     for row in matrix.iter() {
         assert_eq!(row.len(), vector.len(), "row length must match vector length");
-        let mut acc = F::ZERO;
+        let mut acc = 0u128;
         for (a, b) in row.iter().zip(vector.iter()) {
-            acc += *a * *b;
+            acc = acc.wrapping_add(a.wrapping_mul(*b));
         }
         out.push(acc);
     }
     out
 }
 
-pub fn round<F>(vector: Vec<F>, p: u128) -> Vec<F>
-where
-    F: PrimeField,
-    <F as PrimeField>::BigInt: AsRef<[u64]>,
-{
-    let q = biguint_from_bigint(F::MODULUS);
-    let p_big = BigUint::from(p);
-    let mut ret = Vec::with_capacity(vector.len());
-    for x in vector.iter() {
-        let x_big = biguint_from_bigint(x.into_bigint());
-        let product = x_big * &p_big; // exact big integer product
-        let y = &product / &q;        // floor division
-        // map back into field by interpreting y as small integer (y < p <= 2^64)
-        let y_u128 = y.to_u128().unwrap_or(u128::MAX);
-        ret.push(F::from(y_u128));
-    }
-    ret
+// Round coefficients from Z_{2^128} down to p = 2^92 by dropping the low bits.
+pub fn round(vector: Vec<u128>, shift: u32) -> Vec<u128> {
+    vector.into_iter().map(|x| x >> shift).collect()
 }
 
 // Convert a field element into a native u64 by taking the least-significant limb.
@@ -60,17 +45,3 @@ where
     lo | (hi << 64)
 }
 
-// Convert a 2-limb little-endian bigint to u128 (specific to F128).
-fn biguint_from_bigint<B>(b: B) -> BigUint
-where
-    B: AsRef<[u64]>,
-{
-    let limbs = b.as_ref();
-    let mut acc = BigUint::from(0u32);
-    for (i, limb) in limbs.iter().enumerate() {
-        if *limb != 0 {
-            acc += BigUint::from(*limb) << (i * 64);
-        }
-    }
-    acc
-}

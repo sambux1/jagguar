@@ -5,7 +5,7 @@ from estimator import LWE
 
 # parameters
 key_length_list  = [2048, 3072]
-q_list           = [2**127 - 1, 2**127 - 1]
+q_list           = [2**128, 2**128]
 p_list           = [2**64, 2**92]
 adv_samples_list = [sage.all.oo, sage.all.oo]
 
@@ -37,11 +37,18 @@ for key_length, q, p, adv_samples in zip(key_length_list, q_list, p_list, adv_sa
         key=lambda x: x[1]
     )
     min_bits_int = int(math.floor(best_bits))
+
+    # pretty-print q as a power of 2 when applicable
+    q_is_pow2 = (q > 0) and ((q & (q - 1)) == 0)
+    q_exp = q.bit_length() - 1 if q_is_pow2 else None
+    q_str = f"2^{q_exp} (={q})" if q_exp is not None else str(q)
+
     # pretty-print p as a power of 2 when applicable
     p_is_pow2 = (p > 0) and ((p & (p - 1)) == 0)
     p_exp = p.bit_length() - 1 if p_is_pow2 else None
     p_str = f"2^{p_exp} (={p})" if p_exp is not None else str(p)
-    print(f"[params n={key_length}, q={q}, p={p_str}] min_security_bits={min_bits_int}")
+
+    print(f"[params n={key_length}, q={q_str}, p={p_str}] min_security_bits={min_bits_int}")
 
     # collect result for JSON output
     try:
@@ -50,7 +57,7 @@ for key_length, q, p, adv_samples in zip(key_length_list, q_list, p_list, adv_sa
         m_serializable = str(adv_samples)
     results.append({
         "n": int(key_length),
-        "q": int(q),
+        "q": q_str,
         "p": p_str,
         "m": m_serializable,
         "min_security_bits": min_bits_int

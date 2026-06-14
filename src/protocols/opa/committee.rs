@@ -1,22 +1,21 @@
+use std::io::{Cursor, Read, Write};
+
 use crate::protocols::committee::Committee;
 use crate::protocols::opa::server::OPAState;
 use crate::communicator::Communicator;
-use crate::crypto::F128;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use std::io::{Cursor, Read};
+use crate::crypto::{F128, util::field_to_128};
 
 pub struct OPACommittee {
     server_state: Option<OPAState>,
     communicator: Communicator,
-    input_shares: Option<Vec<Vec<F128>>>,
-    output_share: Option<Vec<F128>>,
+    input_shares: Option<Vec<Vec<u128>>>,
+    output_share: Option<Vec<u128>>,
 }
 
 impl Committee for OPACommittee {
     type ServerState = OPAState;
 
     fn new(port: u16) -> Self {
-        // create a communicator on the passed port
         let communicator = Communicator::new(port);
 
         Self {
@@ -32,37 +31,28 @@ impl Committee for OPACommittee {
     }
 
     fn retrieve_inputs(&mut self) {
-        // signal the server that we're ready to retrieve inputs
         let server_port = self.server_state.as_ref().unwrap().port;
         let inputs = self.communicator.receive_from_server(server_port)
             .expect("Failed to receive inputs from server");
 
-        // Parse the received data into secret shares.
-        // The data format is length-prefixed: each share is preceded by a 4-byte little-endian
-        // u32 indicating the length of that share's serialized data. This allows us to read
-        // variable-length shares sequentially. Each share is a Vec<F128> representing one
-        // client's secret share for this committee member.
-        // Format: [len1 (4 bytes)][share1 data][len2 (4 bytes)][share2 data]...
+        // Format from send_on_stream: [byte_len u32][byte_len bytes of u128 LE]...
         let mut cursor = Cursor::new(&inputs);
         let mut shares = Vec::new();
         
         while cursor.position() < inputs.len() as u64 {
-            // read the length prefix (u32, little-endian)
             let mut len_bytes = [0u8; 4];
             cursor.read_exact(&mut len_bytes)
                 .expect("Failed to read length prefix");
-            let len = u32::from_le_bytes(len_bytes) as usize;
+            let byte_len = u32::from_le_bytes(len_bytes) as usize;
+            let share_len = byte_len / 16;
             
-            // read the serialized share
-            let mut share_data = vec![0u8; len];
-            cursor.read_exact(&mut share_data)
-                .expect("Failed to read share data");
-            
-            // deserialize the share (Vec<F128>)
-            let mut share_cursor = Cursor::new(&share_data);
-            let share: Vec<F128> = Vec::<F128>::deserialize_compressed(&mut share_cursor)
-                .expect("Failed to deserialize share");
-            
+            let mut share = Vec::with_capacity(share_len);
+            for _ in 0..share_len {
+                let mut xbuf = [0u8; 16];
+                cursor.read_exact(&mut xbuf)
+                    .expect("Failed to read share element");
+                share.push(u128::from_le_bytes(xbuf));
+            }
             shares.push(share);
         }
         
@@ -71,7 +61,6 @@ impl Committee for OPACommittee {
     }
 
     fn aggregate(&mut self) {
-        // get the input shares
         let shares = self.input_shares.as_ref()
             .expect("Must call retrieve_inputs before aggregate");
         
@@ -79,17 +68,14 @@ impl Committee for OPACommittee {
             return;
         }
         
-        // determine the length of each share (all should be the same)
         let share_len = shares[0].len();
         
-        // create the output share by summing corresponding elements
-        let mut output_share = vec![F128::from(0u64); share_len];
+        let mut output_share = vec![0u128; share_len];
         
-        // iterate over each input share and add corresponding elements
         for share in shares {
             assert_eq!(share.len(), share_len, "All shares must have the same length");
             for (i, &value) in share.iter().enumerate() {
-                output_share[i] = output_share[i] + value;
+                output_share[i] = field_to_128(F128::from(output_share[i]) + F128::from(value));
             }
         }
 
@@ -100,25 +86,23 @@ impl Committee for OPACommittee {
 
     fn send_output(&mut self) {
         let mut data = Vec::new();
-        // prepend "committee" identifier so server can distinguish from client messages
         data.extend_from_slice(b"committee");
 
-        // also include this committee's index so the server can use the correct
-        // x-coordinate when running Shamir reconstruction
         let server_port = self.server_state.as_ref().unwrap().port;
         let local_port = self.communicator.port();
-        // ports are allocated as STARTING_PORT for server, then offsets 1..=committee_size
-        // so index = local_port - server_port - 1
         let committee_index: u16 = local_port
             .checked_sub(server_port + 1)
             .expect("Invalid committee port configuration") as u16;
         data.extend_from_slice(&committee_index.to_le_bytes());
         
-        self.output_share
+        let share = self.output_share
             .as_ref()
-            .expect("Must call aggregate before send_output")
-            .serialize_compressed(&mut data)
-            .expect("Failed to serialize output share");
+            .expect("Must call aggregate before send_output");
+        // serialize: length (u32) followed by u128 LE elements
+        data.write_all(&(share.len() as u32).to_le_bytes()).unwrap();
+        for &x in share {
+            data.write_all(&x.to_le_bytes()).unwrap();
+        }
         
         self.communicator.send_to_server(self.server_state.as_ref().unwrap().port, &data)
             .expect("Failed to send output share to server");
