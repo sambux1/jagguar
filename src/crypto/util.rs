@@ -1,4 +1,6 @@
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
+
+use crate::crypto::{FieldBytes, FIELD_ELEMENT_BYTES};
 
 // Multiply a matrix (rows of u128) by a vector over Z_{2^128}.
 // Each multiplication wraps modulo 2^128; the sum also wraps — i.e. arithmetic in Z_{2^128}.
@@ -20,20 +22,8 @@ pub fn round(vector: Vec<u128>, shift: u32) -> Vec<u128> {
     vector.into_iter().map(|x| x >> shift).collect()
 }
 
-// Convert a field element into a native u64 by taking the least-significant limb.
-// This is correct when the integer representative fits in 64 bits (e.g. outputs of round with p <= 2^64).
-pub fn field_to_64<F>(x: F) -> i64
-where
-    F: PrimeField,
-    <F as PrimeField>::BigInt: AsRef<[u64]>,
-{
-    let limbs = x.into_bigint();
-    let limbs = limbs.as_ref();
-    if limbs.is_empty() { 0 } else { limbs[0] as i64 }
-}
-
-// Convert a field element into a native u128 by computing two 64-bit limbs.
-pub fn field_to_128<F>(x: F) -> u128
+// Least-significant 128 bits of a field element's integer representative.
+pub fn field_low_u128<F>(x: F) -> u128
 where
     F: PrimeField,
     <F as PrimeField>::BigInt: AsRef<[u64]>,
@@ -45,3 +35,22 @@ where
     lo | (hi << 64)
 }
 
+// Serialize a field element to a fixed-width little-endian byte array.
+pub fn field_to_bytes<F>(x: F) -> FieldBytes
+where
+    F: PrimeField,
+{
+    let limb_bytes = x.into_bigint().to_bytes_le();
+    let mut out = [0u8; FIELD_ELEMENT_BYTES];
+    let copy_len = limb_bytes.len().min(FIELD_ELEMENT_BYTES);
+    out[..copy_len].copy_from_slice(&limb_bytes[..copy_len]);
+    out
+}
+
+// Deserialize a field element from a fixed-width little-endian byte array.
+pub fn field_from_bytes<F>(bytes: &FieldBytes) -> F
+where
+    F: PrimeField,
+{
+    F::from_le_bytes_mod_order(bytes)
+}

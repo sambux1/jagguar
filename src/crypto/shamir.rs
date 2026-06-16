@@ -96,27 +96,26 @@ impl<F: Field> Shamir<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::F128;
-    use crate::crypto::util::field_to_64;
+    use crate::crypto::F256;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
     #[test]
     // test that the shares are non-zero and non-deterministic
     fn test_share_randomization() {
-        let shamir = Shamir::<F128>::new(31, 16);
+        let shamir = Shamir::<F256>::new(31, 16);
         let mut rng = ChaCha20Rng::from_entropy();
 
         // create two secret sharings of the same secret
-        let shares_0 = shamir.share(F128::from(17), &mut rng).unwrap();
-        let shares_1 = shamir.share(F128::from(17), &mut rng).unwrap();
+        let shares_0 = shamir.share(F256::from(17), &mut rng).unwrap();
+        let shares_1 = shamir.share(F256::from(17), &mut rng).unwrap();
 
         // check that the shares are non-zero
         for share in shares_0.iter() {
-            assert!(field_to_64(share.1) != 0);
+            assert_ne!(share.1, F256::from(0u64));
         }
         for share in shares_1.iter() {
-            assert!(field_to_64(share.1) != 0);
+            assert_ne!(share.1, F256::from(0u64));
         }
 
         // check that the two sharings have different shares
@@ -128,14 +127,14 @@ mod tests {
     #[test]
     // test that the secret can be reconstructed successfully
     fn test_reconstruction() {
-        let shamir = Shamir::<F128>::new(31, 16);
+        let shamir = Shamir::<F256>::new(31, 16);
         let mut rng = ChaCha20Rng::from_entropy();
 
         // create a secret sharing of the secret
-        let shares = shamir.share(F128::from(17), &mut rng).unwrap();
+        let shares = shamir.share(F256::from(17), &mut rng).unwrap();
 
         // reconstruct the secret from any t shares
         let secret = shamir.reconstruct(&shares).unwrap();
-        assert_eq!(secret, F128::from(17));
+        assert_eq!(secret, F256::from(17));
     }
 }

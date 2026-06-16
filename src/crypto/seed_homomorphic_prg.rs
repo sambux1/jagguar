@@ -7,92 +7,67 @@ use crate::crypto::util::{matrix_vector_multiplication, round};
 // Default parameters obtained via the lattice estimator.
 // See /scripts/parameters/shprg_parameters.json for details.
 const LAMBDA: usize = 3072;
-// Outer modulus 2^122: must satisfy (25 clients * 2^outer) < 2^127-1 so F128
-// Shamir reconstruction of summed seeds matches SHPRG addition mod 2^outer.
-const DEFAULT_OUTER_MODULUS_BITS: u32 = 122;
+/// SHPRG outer modulus: arithmetic in Z_{2^128}.
+pub const OUTER_MODULUS_BITS: u32 = 128;
 const DEFAULT_INNER_MODULUS_BITS: u32 = 92;
 
 #[derive(Debug)]
 pub struct SeedHomomorphicPRG {
     public_parameter: Vec<Vec<u128>>,
     seed: Vec<u128>,
-    // outer modulus is 2^outer_modulus_bits; must be <= 128
-    outer_modulus_bits: u32,
-    // inner modulus is 2^inner_modulus_bits; must be < outer_modulus_bits
     inner_modulus_bits: u32,
 }
 
 impl SeedHomomorphicPRG {
     pub fn new() -> Self {
-        Self::new_with_moduli(
+        Self::new_with_modulus(
             Self::sample_public_parameter(4096, LAMBDA),
             Self::sample_seed(LAMBDA),
-            DEFAULT_OUTER_MODULUS_BITS,
             DEFAULT_INNER_MODULUS_BITS,
         )
     }
 
     pub fn new_from_public_seed(seed: [u8; 32]) -> Self {
-        Self::new_with_moduli(
+        Self::new_with_modulus(
             Self::expand_public_parameter(4096, LAMBDA, seed),
             Self::sample_seed(LAMBDA),
-            DEFAULT_OUTER_MODULUS_BITS,
             DEFAULT_INNER_MODULUS_BITS,
         )
     }
 
     pub fn new_from_both_seeds(public_seed: [u8; 32], seed: Vec<u128>) -> Self {
-        Self::new_with_moduli(
+        Self::new_with_modulus(
             Self::expand_public_parameter(4096, LAMBDA, public_seed),
             seed,
-            DEFAULT_OUTER_MODULUS_BITS,
             DEFAULT_INNER_MODULUS_BITS,
         )
     }
 
-    // --- parameterized constructors ---
-
-    pub fn new_with_params(outer_modulus_bits: u32, inner_modulus_bits: u32) -> Self {
-        assert!(outer_modulus_bits <= 128, "outer modulus must be <= 2^128");
-        assert!(inner_modulus_bits < outer_modulus_bits,
-            "inner modulus must be smaller than outer");
+    pub fn new_with_params(inner_modulus_bits: u32) -> Self {
+        assert!(
+            inner_modulus_bits < OUTER_MODULUS_BITS,
+            "inner modulus must be smaller than outer"
+        );
         let pp = Self::sample_public_parameter(4096, LAMBDA);
         let seed = Self::sample_seed(LAMBDA);
-        Self::new_with_moduli(pp, seed, outer_modulus_bits, inner_modulus_bits)
+        Self::new_with_modulus(pp, seed, inner_modulus_bits)
     }
 
-    fn new_with_moduli(
-        mut public_parameter: Vec<Vec<u128>>,
-        mut seed: Vec<u128>,
-        outer_modulus_bits: u32,
+    fn new_with_modulus(
+        public_parameter: Vec<Vec<u128>>,
+        seed: Vec<u128>,
         inner_modulus_bits: u32,
     ) -> Self {
-        // When outer_modulus_bits < 128, mask entries down to the outer modulus.
-        if outer_modulus_bits < 128 {
-            let mask = (1u128 << outer_modulus_bits).wrapping_sub(1);
-            for row in public_parameter.iter_mut() {
-                for x in row.iter_mut() {
-                    *x &= mask;
-                }
-            }
-            for x in seed.iter_mut() {
-                *x &= mask;
-            }
-        }
-        Self { public_parameter, seed, outer_modulus_bits, inner_modulus_bits }
+        assert!(
+            inner_modulus_bits < OUTER_MODULUS_BITS,
+            "inner modulus must be smaller than outer"
+        );
+        Self { public_parameter, seed, inner_modulus_bits }
     }
 
     pub fn expand(&self) -> Vec<u128> {
         let product = matrix_vector_multiplication(&self.public_parameter, &self.seed);
-        // mask down to the outer modulus if it is smaller than 2^128
-        let product = if self.outer_modulus_bits < 128 {
-            let mask = (1u128 << self.outer_modulus_bits).wrapping_sub(1);
-            product.into_iter().map(|x| x & mask).collect()
-        } else {
-            product
-        };
-        let round_shift = self.outer_modulus_bits - self.inner_modulus_bits;
-        round(product, round_shift)
+        round(product, OUTER_MODULUS_BITS - self.inner_modulus_bits)
     }
 
     fn sample_public_parameter(size0: usize, size1: usize) -> Vec<Vec<u128>> {
@@ -132,7 +107,7 @@ impl SeedHomomorphicPRG {
     }
 
     pub fn outer_modulus_bits(&self) -> u32 {
-        self.outer_modulus_bits
+        OUTER_MODULUS_BITS
     }
 
     pub fn inner_modulus_bits(&self) -> u32 {
@@ -147,24 +122,20 @@ mod tests {
     #[test]
     // test that the almost homomorphic property holds with default parameters
     fn test_homomorphic() {
-        // generate two seed homomorphic PRGs with the same public parameter matrix
         let prg_0 = SeedHomomorphicPRG::new_from_public_seed([0u8; 32]);
         let prg_1 = SeedHomomorphicPRG::new_from_public_seed([0u8; 32]);
-        // expand the PRGs
         let output_0 = prg_0.expand();
         let output_1 = prg_1.expand();
-        // get the seeds
         let seed_0 = prg_0.get_seed();
         let seed_1 = prg_1.get_seed();
 
-        // add the seeds together mod 2^outer
-        let mask_outer = (1u128 << DEFAULT_OUTER_MODULUS_BITS).wrapping_sub(1);
-        let mut homomorphic_seed = Vec::with_capacity(seed_0.len());
-        for i in 0..seed_0.len() {
-            homomorphic_seed.push((seed_0[i].wrapping_add(seed_1[i])) & mask_outer);
-        }
+        // add the seeds together mod 2^128
+        let homomorphic_seed: Vec<u128> = seed_0
+            .iter()
+            .zip(seed_1.iter())
+            .map(|(&a, &b)| a.wrapping_add(b))
+            .collect();
 
-        // create a new PRG from the homomorphic seed
         let prg_sum = SeedHomomorphicPRG::new_from_both_seeds([0u8; 32], homomorphic_seed);
         let output_sum = prg_sum.expand();
 

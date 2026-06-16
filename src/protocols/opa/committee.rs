@@ -3,13 +3,15 @@ use std::io::{Cursor, Read, Write};
 use crate::protocols::committee::Committee;
 use crate::protocols::opa::server::OPAState;
 use crate::communicator::Communicator;
-use crate::crypto::{F128, util::field_to_128};
+use crate::crypto::{
+    F256, FieldBytes, FIELD_ELEMENT_BYTES, field_from_bytes, field_to_bytes,
+};
 
 pub struct OPACommittee {
     server_state: Option<OPAState>,
     communicator: Communicator,
-    input_shares: Option<Vec<Vec<u128>>>,
-    output_share: Option<Vec<u128>>,
+    input_shares: Option<Vec<Vec<FieldBytes>>>,
+    output_share: Option<Vec<FieldBytes>>,
 }
 
 impl Committee for OPACommittee {
@@ -35,7 +37,7 @@ impl Committee for OPACommittee {
         let inputs = self.communicator.receive_from_server(server_port)
             .expect("Failed to receive inputs from server");
 
-        // Format from send_on_stream: [byte_len u32][byte_len bytes of u128 LE]...
+        // Format from send_on_stream: [byte_len u32][byte_len bytes of field elements LE]...
         let mut cursor = Cursor::new(&inputs);
         let mut shares = Vec::new();
         
@@ -44,14 +46,14 @@ impl Committee for OPACommittee {
             cursor.read_exact(&mut len_bytes)
                 .expect("Failed to read length prefix");
             let byte_len = u32::from_le_bytes(len_bytes) as usize;
-            let share_len = byte_len / 16;
+            let share_len = byte_len / FIELD_ELEMENT_BYTES;
             
             let mut share = Vec::with_capacity(share_len);
             for _ in 0..share_len {
-                let mut xbuf = [0u8; 16];
+                let mut xbuf = [0u8; FIELD_ELEMENT_BYTES];
                 cursor.read_exact(&mut xbuf)
                     .expect("Failed to read share element");
-                share.push(u128::from_le_bytes(xbuf));
+                share.push(xbuf);
             }
             shares.push(share);
         }
@@ -70,12 +72,14 @@ impl Committee for OPACommittee {
         
         let share_len = shares[0].len();
         
-        let mut output_share = vec![0u128; share_len];
+        let mut output_share = vec![[0u8; FIELD_ELEMENT_BYTES]; share_len];
         
         for share in shares {
             assert_eq!(share.len(), share_len, "All shares must have the same length");
-            for (i, &value) in share.iter().enumerate() {
-                output_share[i] = field_to_128(F128::from(output_share[i]) + F128::from(value));
+            for (i, value) in share.iter().enumerate() {
+                let sum = field_from_bytes::<F256>(&output_share[i])
+                    + field_from_bytes::<F256>(value);
+                output_share[i] = field_to_bytes(sum);
             }
         }
 
@@ -98,10 +102,10 @@ impl Committee for OPACommittee {
         let share = self.output_share
             .as_ref()
             .expect("Must call aggregate before send_output");
-        // serialize: length (u32) followed by u128 LE elements
+        // serialize: length (u32) followed by 32-byte field elements
         data.write_all(&(share.len() as u32).to_le_bytes()).unwrap();
-        for &x in share {
-            data.write_all(&x.to_le_bytes()).unwrap();
+        for x in share {
+            data.write_all(x).unwrap();
         }
         
         self.communicator.send_to_server(self.server_state.as_ref().unwrap().port, &data)

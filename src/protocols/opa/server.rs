@@ -3,9 +3,11 @@ use std::net::TcpStream;
 use std::sync::mpsc;
 
 use crate::protocols::server::Server;
-use crate::crypto::{SeedHomomorphicPRG, shamir::Shamir, F128};
+use crate::crypto::{
+    F256, FieldBytes, FIELD_ELEMENT_BYTES, SeedHomomorphicPRG, Shamir, field_from_bytes,
+    field_low_u128,
+};
 use crate::crypto::prg::populate_random_bytes;
-use crate::crypto::util::field_to_128;
 use crate::util::packing::unpack_vector;
 use crate::communicator::Communicator;
 use crate::protocols::opa::client::{NUM_PARTIES_UPPER_BOUND, OUTPUT_LEN};
@@ -114,13 +116,13 @@ impl OPAServer {
             for i in 0..num_shares {
                 cursor.read_exact(&mut buf).unwrap();
                 let share_len = u32::from_le_bytes(buf) as usize;
-                let share_bytes = share_len * 16;
+                let share_bytes = share_len * FIELD_ELEMENT_BYTES;
                 if i == committee_index as usize {
                     let mut share = Vec::with_capacity(share_len);
                     for _ in 0..share_len {
-                        let mut xbuf = [0u8; 16];
+                        let mut xbuf = [0u8; FIELD_ELEMENT_BYTES];
                         cursor.read_exact(&mut xbuf).unwrap();
-                        share.push(u128::from_le_bytes(xbuf));
+                        share.push(xbuf);
                     }
                     committee_shares.push(share);
                 } else {
@@ -131,12 +133,12 @@ impl OPAServer {
         
         // serialize all shares for this committee member.
         // send_on_stream prefixes each blob with its byte length, so the committee
-        // derives the element count as byte_len / 16 — do not add a redundant inner prefix.
+        // derives the element count as byte_len / FIELD_ELEMENT_BYTES — do not add a redundant inner prefix.
         let mut serialized_shares = Vec::new();
         for share in &committee_shares {
             let mut data = Vec::new();
-            for &x in share {
-                data.extend_from_slice(&x.to_le_bytes());
+            for x in share {
+                data.extend_from_slice(x);
             }
             serialized_shares.push(data);
         }
@@ -283,10 +285,10 @@ impl Server for OPAServer {
         println!("Performing final aggregation with {} committee messages", committee_messages.len());
 
         // extract the secret shares from the committee messages, along with their indices
-        let mut committee_outputs: Vec<(usize, Vec<u128>)> =
+        let mut committee_outputs: Vec<(usize, Vec<FieldBytes>)> =
             Vec::with_capacity(committee_messages.len());
         for msg in committee_messages {
-            // format: "committee" (9 bytes) || index (u16 LE) || [len u32] [u128 x len]
+            // format: "committee" (9 bytes) || index (u16 LE) || [len u32] [field element x len]
             if msg.len() < 11 || &msg[..9] != b"committee" {
                 eprintln!("Malformed committee message; missing prefix");
                 continue;
@@ -301,9 +303,9 @@ impl Server for OPAServer {
             let share_len = u32::from_le_bytes(buf) as usize;
             let mut share = Vec::with_capacity(share_len);
             for _ in 0..share_len {
-                let mut xbuf = [0u8; 16];
+                let mut xbuf = [0u8; FIELD_ELEMENT_BYTES];
                 cursor.read_exact(&mut xbuf).unwrap();
-                share.push(u128::from_le_bytes(xbuf));
+                share.push(xbuf);
             }
             committee_outputs.push((committee_index, share));
         }
@@ -313,22 +315,23 @@ impl Server for OPAServer {
             return;
         }
 
-        // reconstruct the SHPRG seed from the secret shares (Shamir over F128)
-        let shamir = Shamir::<F128>::new(
+        // reconstruct the SHPRG seed from the secret shares (Shamir over F256)
+        let shamir = Shamir::<F256>::new(
             state.committee_size as usize,
             state.reconstruction_threshold as usize
         );
         let seed_len = committee_outputs[0].1.len();
         let mut reconstructed_seed: Vec<u128> = Vec::with_capacity(seed_len);
         for j in 0..seed_len {
-            let mut pairs: Vec<(F128, F128)> = Vec::with_capacity(committee_outputs.len());
+            let mut pairs: Vec<(F256, F256)> = Vec::with_capacity(committee_outputs.len());
             for (idx, share_vec) in committee_outputs.iter() {
-                let x = F128::from((*idx as u64) + 1);
-                let y = F128::from(share_vec[j]);
+                let x = F256::from((*idx as u64) + 1);
+                let y = field_from_bytes(&share_vec[j]);
                 pairs.push((x, y));
             }
             let s = shamir.reconstruct(&pairs).expect("Shamir reconstruction failed");
-            reconstructed_seed.push(field_to_128(s));
+            // Sum of client seed components can exceed 2^128; SHPRG uses Z_{2^128}.
+            reconstructed_seed.push(field_low_u128(s));
         }
         println!("Reconstructed SHPRG seed of length {}", reconstructed_seed.len());
 
@@ -337,7 +340,7 @@ impl Server for OPAServer {
         let mask = shprg.expand();
         println!("Expanded SHPRG mask of length {}", mask.len());
 
-        // aggregate input ciphertexts in F128
+        // aggregate input ciphertexts in Z_{2^128}
         let mut client_iter = client_messages.into_iter();
         let first_raw = client_iter.next().unwrap();
         let mut cursor = std::io::Cursor::new(&first_raw);
@@ -359,19 +362,19 @@ impl Server for OPAServer {
             for i in 0..OUTPUT_LEN {
                 let mut xbuf = [0u8; 16];
                 c.read_exact(&mut xbuf).unwrap();
-                aggregated_ciphertext[i] = field_to_128(
-                    F128::from(aggregated_ciphertext[i]) + F128::from(u128::from_le_bytes(xbuf))
-                );
+                aggregated_ciphertext[i] =
+                    aggregated_ciphertext[i].wrapping_add(u128::from_le_bytes(xbuf));
             }
             num_clients += 1;
         }
         println!("Aggregated masked ciphertext from {} clients", num_clients);
 
-        // unmask the aggregated ciphertext in F128
-        let mut unmasked = aggregated_ciphertext.clone();
-        for i in 0..OUTPUT_LEN {
-            unmasked[i] = field_to_128(F128::from(unmasked[i]) - F128::from(mask[i]));
-        }
+        // unmask the aggregated ciphertext in Z_{2^128}
+        let unmasked: Vec<u128> = aggregated_ciphertext
+            .iter()
+            .zip(mask.iter())
+            .map(|(&c, &m)| c.wrapping_sub(m))
+            .collect();
 
         let decoded = Self::decode_output(&state, unmasked, payload_len);
         println!("Decoded output length: {}", decoded.len());
