@@ -25,7 +25,12 @@ simulator = []
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+dhat = "0.3"
 
 [[bench]]
 name = "shprg_expand"
+harness = false
+
+[[bench]]
+name = "shprg_memory"
 harness = false

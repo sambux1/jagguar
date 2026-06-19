@@ -26,3 +26,5 @@ Cargo.lock
 scripts/parameters/lattice-estimator/
 
 env/
+
+*.png
