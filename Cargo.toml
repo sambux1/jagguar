@@ -22,3 +22,10 @@ required-features = ["simulator"]
 [features]
 default = []
 simulator = []
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "shprg_expand"
+harness = false
