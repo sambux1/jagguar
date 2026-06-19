@@ -22,6 +22,14 @@ pub fn round(vector: Vec<u128>, shift: u32) -> Vec<u128> {
     vector.into_iter().map(|x| x >> shift).collect()
 }
 
+// Wrapping dot product of two equal-length slices over Z_{2^128}.
+pub fn dot_product(row: &[u128], vector: &[u128]) -> u128 {
+    debug_assert_eq!(row.len(), vector.len(), "row length must match vector length");
+    row.iter()
+        .zip(vector.iter())
+        .fold(0u128, |acc, (&a, &b)| acc.wrapping_add(a.wrapping_mul(b)))
+}
+
 // Least-significant 128 bits of a field element's integer representative.
 pub fn field_low_u128<F>(x: F) -> u128
 where

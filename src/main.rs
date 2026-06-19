@@ -17,8 +17,8 @@ fn main() {
     let after_sample = Instant::now();
     println!("Sample: {:?}", after_sample.duration_since(start));
     
-    prg_0.expand();
-    prg_1.expand();
+    prg_0.expand(4096);
+    prg_1.expand(4096);
     
     let after_expand = Instant::now();
     println!("Expand: {:?}", after_expand.duration_since(after_sample));

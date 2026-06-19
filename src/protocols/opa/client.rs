@@ -114,7 +114,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         assert!(payload_len <= OUTPUT_LEN, "encoded input exceeds SHPRG output length");
         encoded_input.resize(OUTPUT_LEN, 0);
 
-        let mask = shprg.expand();
+        let mask = shprg.expand(OUTPUT_LEN);
 
         let masked_input: Vec<u128> = encoded_input
             .iter()

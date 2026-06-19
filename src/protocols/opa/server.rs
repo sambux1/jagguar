@@ -57,7 +57,6 @@ pub struct OPAState {
 pub struct OPAServer {
     setup_parameters: OPASetupParameters,
     state: OPAState,
-    public_parameter: Vec<Vec<u128>>,
     communicator: Option<Communicator>,
 }
 
@@ -181,7 +180,6 @@ impl Server for OPAServer {
                 client_messages: Vec::new(),
                 committee_messages: Vec::new(),
             },
-            public_parameter: Vec::new(),
             communicator: None,
         };
         server.setup(server.setup_parameters);
@@ -229,11 +227,6 @@ impl Server for OPAServer {
             client_messages,
             committee_messages,
         };
-
-        // sample the public parameter from the succinct seed
-        let shprg = SeedHomomorphicPRG::new_from_public_seed(succinct_seed);
-        let public_parameter = shprg.get_public_parameter();
-        self.public_parameter = public_parameter.clone();
     }
 
     fn on_communicator_setup(&mut self, port: u16) {
@@ -337,7 +330,7 @@ impl Server for OPAServer {
 
         // expand the SHPRG seed
         let shprg = SeedHomomorphicPRG::new_from_both_seeds(state.succinct_seed, reconstructed_seed);
-        let mask = shprg.expand();
+        let mask = shprg.expand(OUTPUT_LEN);
         println!("Expanded SHPRG mask of length {}", mask.len());
 
         // aggregate input ciphertexts in Z_{2^128}

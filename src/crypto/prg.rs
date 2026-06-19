@@ -36,3 +36,12 @@ where
 pub fn populate_random_bytes<R: Rng + ?Sized>(v: &mut [u8], rng: &mut R) {
     rng.fill(v);
 }
+
+// Construct a ChaCha20 RNG from a 32-byte seed, seeked to a specific 32-bit word position.
+// This allows row i of a virtual matrix to be materialized independently:
+// position each row at word_pos = i * row_len * WORDS_PER_ELEMENT.
+pub fn seeded_rng_at_word(seed: [u8; 32], word_pos: u128) -> ChaCha20Rng {
+    let mut rng = ChaCha20Rng::from_seed(seed);
+    rng.set_word_pos(word_pos);
+    rng
+}
