@@ -3,8 +3,9 @@ use std::time::Instant;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
-use jagguar::{Client, Server};
-use jagguar::opa::{OPAClient, OPAServer, OPASetupParameters};
+use jagguar::protocols::client::Client;
+use jagguar::protocols::server::Server;
+use jagguar::protocols::opa::{OPAClient, OPAServer, OPASetupParameters};
 
 fn main() {
     let start = Instant::now();
