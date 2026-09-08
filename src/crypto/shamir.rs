@@ -1,8 +1,18 @@
+//! Shamir secret sharing.
+//!
+//! Threshold sharing over a prime field, following
+//! [Shamir](https://doi.org/10.1145/359168.359176). OPA instantiates this over
+//! [`super::F256`].
+
 use ark_ff::{Field, UniformRand, PrimeField};
 use ark_std::rand::Rng;
 use core::marker::PhantomData;
 
-// Encapsulates parameters and provides share/reconstruct methods.
+/// Shamir secret sharing with `num_shares` shares and reconstruction threshold
+/// `threshold` (polynomial degree `threshold - 1`).
+///
+/// Evaluation points are `x = 1, ..., num_shares`. Parameters are checked when
+/// sharing, not in [`Self::new`].
 pub struct Shamir<F: Field> {
     num_shares: usize,
     threshold: usize,
@@ -10,15 +20,21 @@ pub struct Shamir<F: Field> {
     _marker: PhantomData<F>,
 }
 
+/// Failure from [`Shamir::share`] or [`Shamir::reconstruct`].
 #[derive(Debug)]
 pub enum ShamirError {
+    /// Threshold is less than 2.
     InvalidThreshold,
+    /// `num_shares` is less than the threshold.
     InvalidNumShares,
+    /// Fewer than `threshold` shares were provided.
     InsufficientShares,
+    /// A Lagrange denominator was not invertible.
     ReconstructionFailed,
 }
 
 impl<F: Field> Shamir<F> {
+    /// `threshold`-of-`num_shares` sharing. Does not validate the pair.
     pub fn new(num_shares: usize, threshold: usize) -> Self {
         Self {
             num_shares,
@@ -27,7 +43,13 @@ impl<F: Field> Shamir<F> {
         }
     }
     
-    // Share a single secret value into (x_i, y_i) pairs, using the configured x-coordinates
+    /// Share `secret` into `num_shares` pairs `(x_i, y_i)` with `x_i = i`.
+    ///
+    /// # Errors
+    ///
+    /// [`ShamirError::InvalidThreshold`] if the threshold is less than 2.
+    /// [`ShamirError::InvalidNumShares`] if there are fewer shares than the
+    /// threshold.
     pub fn share<R: Rng>(&self, secret: F, rng: &mut R) -> Result<Vec<(F, F)>, ShamirError>
     where
         F: UniformRand + PrimeField,
@@ -58,7 +80,16 @@ impl<F: Field> Shamir<F> {
         Ok(shares)
     }
 
-    // Reconstruct a secret from any t shares using Lagrange interpolation at x = 0
+    /// Reconstruct the secret from at least `threshold` shares via Lagrange
+    /// interpolation at `x = 0`.
+    ///
+    /// Uses the first `threshold` shares in `shares` and ignores the rest.
+    ///
+    /// # Errors
+    ///
+    /// [`ShamirError::InsufficientShares`] if fewer than `threshold` shares
+    /// are given. [`ShamirError::ReconstructionFailed`] if a Lagrange
+    /// denominator is not invertible.
     pub fn reconstruct(&self, shares: &[(F, F)]) -> Result<F, ShamirError> {
         if shares.len() < self.threshold { return Err(ShamirError::InsufficientShares); }
 
@@ -87,8 +118,9 @@ impl<F: Field> Shamir<F> {
         Ok(secret)
     }
 
-    // getter functions
+    /// Reconstruction threshold `t`.
     pub fn threshold(&self) -> usize { self.threshold }
+    /// Number of shares `n`.
     pub fn num_shares(&self) -> usize { self.num_shares }
 }
 

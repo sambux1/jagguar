@@ -1,9 +1,17 @@
+//! Arithmetic over `Z_{2^128}` and prime-field encoding.
+//!
+//! [`dot_product`] is used by [`super::SeedHomomorphicPRG::expand`]. The field
+//! helpers serialize [`super::F256`] shares for the wire.
+
 use ark_ff::{BigInteger, PrimeField};
 
 use crate::crypto::{FieldBytes, FIELD_ELEMENT_BYTES};
 
-// Multiply a matrix (rows of u128) by a vector over Z_{2^128}.
-// Each multiplication wraps modulo 2^128; the sum also wraps — i.e. arithmetic in Z_{2^128}.
+/// Matrix-vector product over `Z_{2^128}` (wrapping).
+///
+/// # Panics
+///
+/// Panics if a row's length differs from `vector`.
 pub fn matrix_vector_multiplication(matrix: &Vec<Vec<u128>>, vector: &Vec<u128>) -> Vec<u128> {
     let mut out = Vec::with_capacity(matrix.len());
     for row in matrix.iter() {
@@ -17,12 +25,16 @@ pub fn matrix_vector_multiplication(matrix: &Vec<Vec<u128>>, vector: &Vec<u128>)
     out
 }
 
-// Round coefficients from Z_{2^128} down to p = 2^92 by dropping the low bits.
+/// Drop the low `shift` bits of each coefficient (`x >> shift`).
+///
+/// SHPRG rounding from `Z_{2^128}` to `Z_{2^p}` uses `shift = 128 - p`.
 pub fn round(vector: Vec<u128>, shift: u32) -> Vec<u128> {
     vector.into_iter().map(|x| x >> shift).collect()
 }
 
-// Wrapping dot product of two equal-length slices over Z_{2^128}.
+/// Wrapping inner product over `Z_{2^128}`.
+///
+/// Lengths must match; this is a debug assertion.
 pub fn dot_product(row: &[u128], vector: &[u128]) -> u128 {
     debug_assert_eq!(row.len(), vector.len(), "row length must match vector length");
     row.iter()
@@ -30,7 +42,10 @@ pub fn dot_product(row: &[u128], vector: &[u128]) -> u128 {
         .fold(0u128, |acc, (&a, &b)| acc.wrapping_add(a.wrapping_mul(b)))
 }
 
-// Least-significant 128 bits of a field element's integer representative.
+/// Least-significant 128 bits of a field element's integer representative.
+///
+/// Used to map a reconstructed [`super::F256`] SHPRG seed component back into
+/// `Z_{2^128}` (the sum of seeds may exceed `2^128`).
 pub fn field_low_u128<F>(x: F) -> u128
 where
     F: PrimeField,
@@ -43,7 +58,7 @@ where
     lo | (hi << 64)
 }
 
-// Serialize a field element to a fixed-width little-endian byte array.
+/// Serialize a field element to [`FIELD_ELEMENT_BYTES`] little-endian bytes.
 pub fn field_to_bytes<F>(x: F) -> FieldBytes
 where
     F: PrimeField,
@@ -55,7 +70,8 @@ where
     out
 }
 
-// Deserialize a field element from a fixed-width little-endian byte array.
+/// Deserialize a field element from [`FIELD_ELEMENT_BYTES`] little-endian bytes
+/// (reduced modulo the field characteristic).
 pub fn field_from_bytes<F>(bytes: &FieldBytes) -> F
 where
     F: PrimeField,
