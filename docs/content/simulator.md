@@ -18,5 +18,5 @@ cargo run --release --bin simulator --features simulator
 The example binary runs a localhost OPA aggregation (one server, 25 clients,
 a committee) and checks the decoded output against the plaintext sum.
 
-Types and methods are documented in rustdoc (`jagguar::simulator`), included
-when you build with `--features simulator`. See the [API reference](api.md).
+Types and methods are documented in rustdoc (`jagguar::simulator`). See the
+[API reference](https://docs.rs/jagguar).

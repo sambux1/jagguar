@@ -3,6 +3,15 @@ name = "jagguar"
 version = "0.1.0"
 edition = "2024"
 default-run = "jagguar"
+description = "Single-server secure aggregation"
+license = "MIT"
+repository = "https://github.com/sambux1/aggregation"
+documentation = "https://docs.rs/jagguar"
+homepage = "https://jagguar.readthedocs.io"
+readme = "README.md"
+
+[package.metadata.docs.rs]
+features = ["simulator"]
 
 [dependencies]
 ark-ff = "0.5.0"

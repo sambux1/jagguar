@@ -2,7 +2,7 @@ site_name: Jagguar
 docs_dir: content/
 nav:
   - Home: index.md
-  - API: api.md
+  - API: https://docs.rs/jagguar
   - Simulator: simulator.md
   - Roadmap: roadmap.md
 markdown_extensions:

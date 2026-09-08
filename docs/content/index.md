@@ -7,7 +7,7 @@ Jagguar is a library for single-server secure aggregation. It is under active de
 
 ## API Reference
 
-The API reference for the Rust library is found [here](api.md).
+The API reference for the Rust library is found [here](https://docs.rs/jagguar).
 
 ## Currently Supported Protocols
 
@@ -15,6 +15,6 @@ The API reference for the Rust library is found [here](api.md).
 
 ## Other pages
 
-- [API reference](api.md)
+- [API reference](https://docs.rs/jagguar)
 - [Simulator](simulator.md)
 - [Roadmap](roadmap.md)

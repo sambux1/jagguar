@@ -9,7 +9,7 @@ build:
     python: "3.13"
     rust: latest
   jobs:
-    # Publish rustdoc next to the MkDocs site. Linked from docs/content/api.md.
+    # Publish rustdoc next to the MkDocs site.
     post_build:
       - cargo doc --no-deps --features simulator
       - mkdir -p "$READTHEDOCS_OUTPUT/html/rustdoc"
