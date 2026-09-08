@@ -3,31 +3,49 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
+/// Aggregation server: public parameters, input collection, and decode.
+///
+/// Communication is localhost TCP via [`Communicator`].
 pub trait Server: Sized {
     type SetupParameters;
+    /// Public state distributed to clients and committee members. Must be
+    /// [`Clone`] so the simulator can hand out copies.
     type State: Clone;
 
     /// Construct a new server.
     fn new(args: Self::SetupParameters) -> Self;
     fn setup(&mut self, args: Self::SetupParameters);
     fn get_state(&self) -> &Self::State;
-    /// Aggregate using the provided state. This allows callbacks to call aggregation
-    /// without needing access to the server instance.
+    /// Final aggregation from a state snapshot.
+    ///
+    /// Takes `&State` so communicator callbacks can run this without a
+    /// `&mut Self`.
     fn aggregate(state: &Self::State);
+    /// Local-port offsets of committee members, relative to the simulator
+    /// base port.
     fn get_committee_port_offsets(&self) -> Vec<u16>;
 
-    /// Optionally allow the caller (e.g., simulator) to install an output channel
-    /// that the server can use to send results back to the main thread.
-    /// Default implementation is a no-op so servers that don't use it can ignore it.
+    /// Install a channel for the decoded output (simulator hook).
+    ///
+    /// Default is a no-op. The payload type is `Vec<u32>` for the current
+    /// simulator.
     fn set_output_channel(&mut self, _sender: Sender<Vec<u32>>) {}
 
     fn set_communicator(&mut self, comm: Communicator);
     fn get_communicator(&mut self) -> &mut Communicator;
 
+    /// Called after the communicator is bound, before the listen loop.
     fn on_communicator_setup(&mut self, _port: u16) {
         // default: do nothing
     }
 
+    /// Bind `port`, publish [`Self::State`], and run the listen loop until
+    /// `shutdown` is set.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the listener fails to bind or the listen loop returns an
+    /// error.
     fn setup_communicator(
         &mut self,
         port: u16,

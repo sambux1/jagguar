@@ -1,3 +1,5 @@
+//! OPA server: public parameters, share routing, unmask, and decode.
+
 use std::io::Read;
 use std::net::TcpStream;
 use std::sync::mpsc;
@@ -14,6 +16,11 @@ use crate::protocols::opa::client::{NUM_PARTIES_UPPER_BOUND, OUTPUT_LEN};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
+/// Public OPA parameters.
+///
+/// `security_parameter` is κ in the client encoding and corresponds to a statistical security
+//  parameter. `reconstruction_threshold` and `committee_size` are Shamir `t` and `n`.
+// `corruption_threshold` is stored but unused in this semi-honest implementation.
 #[derive(Copy, Clone)]
 pub struct OPASetupParameters {
     security_parameter: u64,
@@ -23,6 +30,7 @@ pub struct OPASetupParameters {
 }
 
 impl OPASetupParameters {
+    /// κ, unused corruption threshold, Shamir `t`, and Shamir `n`.
     pub fn new(
         security_parameter: u64,
         corruption_threshold: u64,
@@ -38,22 +46,32 @@ impl OPASetupParameters {
     }
 }
 
+/// Public OPA state distributed to clients and committee members.
 #[derive(Debug, Clone)]
 pub struct OPAState {
+    /// SHPRG public-parameter seed.
     pub succinct_seed: [u8; 32],
+    /// Statistical security parameter κ.
     pub security_parameter: u64,
+    /// Stored but unused in this semi-honest implementation.
     pub corruption_threshold: u64,
+    /// Shamir reconstruction threshold `t`.
     pub reconstruction_threshold: u64,
+    /// Shamir number of shares `n` (committee size).
     pub committee_size: u64,
+    /// Committee local-port offsets `1 ..= committee_size`.
     pub committee_port_offsets: Vec<u16>,
+    /// Server bind port (set when the communicator starts).
     pub port: u16,
     /// Optional channel for sending decoded output back to the simulator.
     pub output_sender: Option<mpsc::Sender<Vec<u32>>>,
     /// Optional cache of messages used during aggregation.
     pub client_messages: Vec<Vec<u8>>,
+    /// Raw committee messages, filled before [`OPAServer::aggregate`].
     pub committee_messages: Vec<Vec<u8>>,
 }
 
+/// OPA aggregation server.
 pub struct OPAServer {
     setup_parameters: OPASetupParameters,
     state: OPAState,
@@ -61,8 +79,7 @@ pub struct OPAServer {
 }
 
 impl OPAState {
-    /// Decode a packed, masked aggregate back into a vector of u32s.
-    /// This is shared between the server logic and tests/clients.
+    /// Decode an unmasked aggregate, treating every slot as payload.
     pub fn decode_output(&self, output: Vec<u128>) -> Vec<u32> {
         let len = output.len();
         self.decode_output_with_len(output, len)
@@ -91,10 +108,14 @@ impl OPAState {
 }
 
 impl OPAServer {
+    /// [`OPAState::decode_output_with_len`] for the server's aggregate path.
     fn decode_output(state: &OPAState, output: Vec<u128>, payload_len: usize) -> Vec<u32> {
         state.decode_output_with_len(output, payload_len)
     }
 
+    /// Forward this member's Shamir shares over `tcp_stream`.
+    ///
+    /// Committee index is `port - 10001` (localhost convention).
     fn send_to_committee(tcp_stream: TcpStream, raw_messages: Vec<Vec<u8>>, port: u16) {
         let committee_index = port - 10001; // TODO: this should be a constant/partyID
 
@@ -164,6 +185,7 @@ impl Server for OPAServer {
     type SetupParameters = OPASetupParameters;
     type State = OPAState;
     
+    /// Construct and [`Self::setup`] from `setup_parameters`.
     fn new(setup_parameters: OPASetupParameters) -> Self {
         // default initialization, delegate real work to setup function
         let mut server = Self {
@@ -186,14 +208,22 @@ impl Server for OPAServer {
         server
     }
 
+    /// Install the localhost communicator.
     fn set_communicator(&mut self, comm: Communicator) {
         self.communicator = Some(comm);
     }
 
+    /// The communicator, once [`Self::set_communicator`] has been called.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no communicator is set.
     fn get_communicator(&mut self) -> &mut Communicator {
         self.communicator.as_mut().unwrap()
     }
 
+    /// Sample the SHPRG public-parameter seed and committee port offsets
+    /// `1 ..= committee_size`. Preserves an existing output channel.
     fn setup(&mut self, args: Self::SetupParameters) {
         self.setup_parameters = args;
 
@@ -229,6 +259,7 @@ impl Server for OPAServer {
         };
     }
 
+    /// Record `port` and register share-forwarding and aggregation callbacks.
     fn on_communicator_setup(&mut self, port: u16) {
         self.state.port = port;
         
@@ -254,18 +285,23 @@ impl Server for OPAServer {
 		});
     }
 
+    /// Current public [`OPAState`].
     fn get_state(&self) -> &Self::State {
         &self.state
     }
 
+    /// Committee port offsets (`1 ..= committee_size`).
     fn get_committee_port_offsets(&self) -> Vec<u16> {
         self.state.committee_port_offsets.clone()
     }
 
+    /// Simulator channel for the decoded aggregate.
     fn set_output_channel(&mut self, sender: mpsc::Sender<Vec<u32>>) {
         self.state.output_sender = Some(sender);
     }
 
+    /// Reconstruct the summed SHPRG seed, expand, unmask, decode, and send
+    /// on the simulator channel if set.
     fn aggregate(state: &OPAState) {
         if state.committee_messages.is_empty() || state.client_messages.is_empty() {
             eprintln!("aggregate() called but messages are not populated; skipping.");

@@ -1,3 +1,11 @@
+//! Semi-honest one-shot private aggregation.
+//!
+//! Instantiates the seed-homomorphic PRG and Shamir flavor of
+//! [Karthikeyan and Polychroniadou](https://eprint.iacr.org/2024/723.pdf).
+//! Clients speak once: they mask with [`crate::crypto::SeedHomomorphicPRG`]
+//! and share the seed to a committee. The committee sums shares; the server
+//! reconstructs the aggregate seed, unmasks, and decodes.
+
 pub mod client;
 pub mod server;
 pub mod committee;
@@ -12,7 +20,7 @@ use crate::protocols::Protocol;
 use num_traits::FromPrimitive;
 use core::marker::PhantomData;
 
-// marker tying together the OPA server, client, and committee under a single Protocol
+/// Protocol marker binding [`OPAClient`], [`OPAServer`], and [`OPACommittee`].
 pub struct OPA<T>(pub PhantomData<T>);
 
 impl<T> Protocol for OPA<T>

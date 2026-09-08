@@ -2,7 +2,10 @@ use super::client::Client;
 use super::committee::Committee;
 use super::server::Server;
 
-// a protocol binds compatible Server, Client, and Committee implementations together
+/// Binds compatible [`Server`], [`Client`], and [`Committee`] implementations.
+///
+/// The client and committee associated types must use the same
+/// [`Server::State`] as the server.
 pub trait Protocol {
     type Input;
     type Server: Server;

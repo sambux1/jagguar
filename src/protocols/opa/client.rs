@@ -1,3 +1,5 @@
+//! OPA input party.
+
 use std::io::Write;
 
 use crate::protocols::client::Client;
@@ -7,12 +9,14 @@ use crate::crypto::prg::{populate_random, default_prg};
 use crate::util::packing::pack_vector;
 use crate::communicator::Communicator;
 
+/// Encoding upper bound on the number of clients (`n = 2^20`).
 pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
 /// Exclusive upper bound on input values; must stay below the SHPRG outer modulus 2^128.
 pub const MAX_FIELD_VALUE: u128 = 1u128 << (OUTER_MODULUS_BITS - 1);
 /// Fixed ciphertext length matching the SHPRG output size.
 pub const OUTPUT_LEN: usize = 4096;
 
+/// OPA client: encode, mask with an SHPRG, Shamir-share the seed.
 pub struct OPAClient<T> {
     input: Option<Vec<T>>,
     server_state: Option<OPAState>,
@@ -22,6 +26,7 @@ pub struct OPAClient<T> {
 }
 
 impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
+    /// Input vector, if [`crate::protocols::Client::set_input`] has been called.
     pub fn get_input(&self) -> Option<&Vec<T>> {
         self.input.as_ref()
     }
@@ -35,10 +40,12 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
             .decode_output(output)
     }
 
+    /// No-op. Clients do not run a setup protocol.
     pub fn setup(&self) {
         // setup the client
     }
 
+    /// Pack and encode as `(2^κ * n * x) + r + 2^κ` with `r` uniform in `[0, 2^κ)`.
     fn encode_input(&self) -> Vec<u128>
     where
         T: Copy + Into<u32> + num_traits::FromPrimitive,
@@ -76,6 +83,8 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
     type Output = (Vec<u128>, Vec<Vec<FieldBytes>>);
     type ServerState = OPAState;
 
+    /// Empty client. Call [`Self::set_input`] and [`Self::set_server_state`]
+    /// before [`Self::encrypt_input`].
     fn new() -> Self {
         Self {
             input: None,
@@ -86,6 +95,11 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         }
     }
     
+    /// Store `input`. Values must be in `[0, MAX_FIELD_VALUE)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any value is at least [`MAX_FIELD_VALUE`].
     fn set_input(&mut self, input: Vec<T>) {
         for (i, value) in input.iter().enumerate() {
             assert!(
@@ -96,10 +110,18 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         self.input = Some(input);
     }
 
+    /// Store the server's public [`OPAState`].
     fn set_server_state(&mut self, state: Self::ServerState) {
         self.server_state = Some(state);
     }
 
+    /// Encode, pad to [`OUTPUT_LEN`], mask with [`SeedHomomorphicPRG`], and
+    /// Shamir-share the seed over [`F256`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input or server state is unset, or if the packed input
+    /// exceeds [`OUTPUT_LEN`].
     fn encrypt_input(&mut self) {
         // assert that the input and server state are set
         assert!(self.input.is_some(), "OPA client input is not set.");
@@ -150,7 +172,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         self.encrypted_output = Some((masked_input.clone(), shares.clone()));
     }
 
-    // send the encrypted input to the server
+    /// Send the masked input and per-committee shares to the server.
     fn send_input(&mut self, port: u16) {
         // create a communicator on the passed port
         let communicator = Communicator::new(port);

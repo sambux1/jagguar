@@ -1,3 +1,5 @@
+//! OPA committee member.
+
 use std::io::{Cursor, Read, Write};
 
 use crate::protocols::committee::Committee;
@@ -7,6 +9,8 @@ use crate::crypto::{
     F256, FieldBytes, FIELD_ELEMENT_BYTES, field_from_bytes, field_to_bytes,
 };
 
+/// Committee member: sum Shamir y-shares over [`crate::crypto::F256`] and return
+/// the result.
 pub struct OPACommittee {
     server_state: Option<OPAState>,
     communicator: Communicator,
@@ -17,6 +21,7 @@ pub struct OPACommittee {
 impl Committee for OPACommittee {
     type ServerState = OPAState;
 
+    /// Bind this member to local `port`.
     fn new(port: u16) -> Self {
         let communicator = Communicator::new(port);
 
@@ -28,10 +33,12 @@ impl Committee for OPACommittee {
         }
     }
 
+    /// Store the server's public [`OPAState`].
     fn set_server_state(&mut self, state: Self::ServerState) {
         self.server_state = Some(state.clone());
     }
 
+    /// Signal the server and parse length-prefixed Shamir shares.
     fn retrieve_inputs(&mut self) {
         let server_port = self.server_state.as_ref().unwrap().port;
         let inputs = self.communicator.receive_from_server(server_port)
@@ -62,6 +69,12 @@ impl Committee for OPACommittee {
         self.input_shares = Some(shares);
     }
 
+    /// Sum shares componentwise in [`crate::crypto::F256`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Self::retrieve_inputs`] has not been called, or if share
+    /// lengths differ.
     fn aggregate(&mut self) {
         let shares = self.input_shares.as_ref()
             .expect("Must call retrieve_inputs before aggregate");
@@ -88,6 +101,12 @@ impl Committee for OPACommittee {
         println!("Aggregated {} shares into output share of length {}", shares.len(), output_share.len());
     }
 
+    /// Send the summed share. Committee index is `local_port - server_port - 1`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Self::aggregate`] has not been called, or if the port
+    /// layout is not `server_port + 1 + index`.
     fn send_output(&mut self) {
         let mut data = Vec::new();
         data.extend_from_slice(b"committee");
