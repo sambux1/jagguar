@@ -31,7 +31,11 @@ where
     let mut count = 0;
 
     for &v in vector {
-        let mask: u32 = if bitwidth == 32 { u32::MAX } else { (1u32 << bitwidth) - 1 };
+        let mask: u32 = if bitwidth == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bitwidth) - 1
+        };
         acc |= (v.into() & mask) << (count * bitwidth);
         count += 1;
         if count == compression_factor {
@@ -70,7 +74,11 @@ where
 
     let compression_factor = 32 / bitwidth;
     let mut out = Vec::with_capacity(vector.len() * compression_factor);
-    let mask: u32 = if bitwidth == 32 { u32::MAX } else { (1u32 << bitwidth) - 1 };
+    let mask: u32 = if bitwidth == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bitwidth) - 1
+    };
 
     for &word in vector {
         for i in 0..compression_factor {
@@ -83,7 +91,6 @@ where
 
     out
 }
-
 
 #[cfg(test)]
 mod tests {

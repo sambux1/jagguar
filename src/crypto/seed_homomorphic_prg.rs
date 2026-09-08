@@ -180,7 +180,11 @@ mod tests {
             let o1 = output_1[i];
             let o_sum = output_sum[i];
             let sum_mod = o0.wrapping_add(o1) % m;
-            let delta = if sum_mod >= o_sum { sum_mod - o_sum } else { o_sum - sum_mod };
+            let delta = if sum_mod >= o_sum {
+                sum_mod - o_sum
+            } else {
+                o_sum - sum_mod
+            };
             let dist = delta.min(m - delta);
             assert!(dist <= 1);
         }

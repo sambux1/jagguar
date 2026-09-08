@@ -5,7 +5,7 @@
 
 use ark_ff::{BigInteger, PrimeField};
 
-use crate::crypto::{FieldBytes, FIELD_ELEMENT_BYTES};
+use crate::crypto::{FIELD_ELEMENT_BYTES, FieldBytes};
 
 /// Matrix-vector product over `Z_{2^128}` (wrapping).
 ///
@@ -15,7 +15,11 @@ use crate::crypto::{FieldBytes, FIELD_ELEMENT_BYTES};
 pub fn matrix_vector_multiplication(matrix: &Vec<Vec<u128>>, vector: &Vec<u128>) -> Vec<u128> {
     let mut out = Vec::with_capacity(matrix.len());
     for row in matrix.iter() {
-        assert_eq!(row.len(), vector.len(), "row length must match vector length");
+        assert_eq!(
+            row.len(),
+            vector.len(),
+            "row length must match vector length"
+        );
         let mut acc = 0u128;
         for (a, b) in row.iter().zip(vector.iter()) {
             acc = acc.wrapping_add(a.wrapping_mul(*b));
@@ -36,7 +40,11 @@ pub fn round(vector: Vec<u128>, shift: u32) -> Vec<u128> {
 ///
 /// Lengths must match; this is a debug assertion.
 pub fn dot_product(row: &[u128], vector: &[u128]) -> u128 {
-    debug_assert_eq!(row.len(), vector.len(), "row length must match vector length");
+    debug_assert_eq!(
+        row.len(),
+        vector.len(),
+        "row length must match vector length"
+    );
     row.iter()
         .zip(vector.iter())
         .fold(0u128, |acc, (&a, &b)| acc.wrapping_add(a.wrapping_mul(b)))

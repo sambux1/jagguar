@@ -23,7 +23,7 @@ pub mod seed_homomorphic_prg;
 pub mod shamir;
 pub mod util;
 
-pub use seed_homomorphic_prg::{SeedHomomorphicPRG, OUTER_MODULUS_BITS};
+pub use seed_homomorphic_prg::{OUTER_MODULUS_BITS, SeedHomomorphicPRG};
 pub use shamir::Shamir;
 pub use util::{field_from_bytes, field_low_u128, field_to_bytes};
 

@@ -2,12 +2,14 @@
 
 use std::io::Write;
 
+use crate::communicator::Communicator;
+use crate::crypto::prg::{default_prg, populate_random};
+use crate::crypto::{
+    F256, FieldBytes, OUTER_MODULUS_BITS, SeedHomomorphicPRG, Shamir, field_to_bytes,
+};
 use crate::protocols::client::Client;
 use crate::protocols::opa::server::OPAState;
-use crate::crypto::{F256, FieldBytes, OUTER_MODULUS_BITS, SeedHomomorphicPRG, Shamir, field_to_bytes};
-use crate::crypto::prg::{populate_random, default_prg};
 use crate::util::packing::pack_vector;
-use crate::communicator::Communicator;
 
 /// Encoding upper bound on the number of clients (`n = 2^20`).
 pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
@@ -52,21 +54,24 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
     {
         let input = self.input.as_ref().expect("OPA client input must be set.");
         let packed = pack_vector(&input);
-        
+
         // compute 2^kappa and (2^kappa * n)
         let kappa: u32 = self.server_state.as_ref().unwrap().security_parameter as u32;
         let two_to_kappa: u128 = 1u128 << kappa;
         let two_to_kappa_times_n: u128 = two_to_kappa * (NUM_PARTIES_UPPER_BOUND as u128);
-        let mask: u64 = if kappa >= 64 { u64::MAX } else { (two_to_kappa - 1) as u64 };
-        
+        let mask: u64 = if kappa >= 64 {
+            u64::MAX
+        } else {
+            (two_to_kappa - 1) as u64
+        };
+
         // compute a vector of random numbers in [0, 2^kappa)
         let mut random_numbers = vec![0u64; packed.len()];
         let mut rng = default_prg();
         populate_random(&mut random_numbers, &mut rng);
         // mask away the higher order bits of the random numbers
-        random_numbers = random_numbers.iter()
-            .map(|&x| x & mask).collect();
-        
+        random_numbers = random_numbers.iter().map(|&x| x & mask).collect();
+
         // encoded = (2^kappa * n * x) + r + 2^kappa
         packed
             .iter()
@@ -94,7 +99,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
             last_seed: None,
         }
     }
-    
+
     /// Store `input`. Values must be in `[0, MAX_FIELD_VALUE)`.
     ///
     /// # Panics
@@ -125,15 +130,22 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
     fn encrypt_input(&mut self) {
         // assert that the input and server state are set
         assert!(self.input.is_some(), "OPA client input is not set.");
-        assert!(self.server_state.is_some(), "OPA client server state is not set.");
+        assert!(
+            self.server_state.is_some(),
+            "OPA client server state is not set."
+        );
 
         // instantiate the SHPRG by expanding the seed into the public parameter
         let shprg = SeedHomomorphicPRG::new_from_public_seed(
-            self.server_state.as_ref().unwrap().succinct_seed);
-        
+            self.server_state.as_ref().unwrap().succinct_seed,
+        );
+
         let mut encoded_input = self.encode_input();
         let payload_len = encoded_input.len();
-        assert!(payload_len <= OUTPUT_LEN, "encoded input exceeds SHPRG output length");
+        assert!(
+            payload_len <= OUTPUT_LEN,
+            "encoded input exceeds SHPRG output length"
+        );
         encoded_input.resize(OUTPUT_LEN, 0);
 
         let mask = shprg.expand(OUTPUT_LEN);
@@ -143,7 +155,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
             .zip(mask.iter())
             .map(|(&x, &m)| x.wrapping_add(m))
             .collect();
-        
+
         // secret share the SHPRG seed using Shamir secret sharing over F256
         let state = self.server_state.as_ref().unwrap();
         let num_shares = state.committee_size as usize;
@@ -154,7 +166,8 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         // organize as shares[party_index][seed_index] = y (stored as 32-byte field element)
         let mut shares: Vec<Vec<FieldBytes>> = vec![Vec::with_capacity(seed.len()); num_shares];
         for &secret in seed.iter() {
-            let secret_shares = shamir.share(F256::from(secret), &mut default_prg())
+            let secret_shares = shamir
+                .share(F256::from(secret), &mut default_prg())
                 .expect("Shamir share failed");
             for i in 0..num_shares {
                 let (_x, y) = secret_shares[i];
@@ -179,7 +192,9 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
 
         // establish a connection to the server through the communicator
         let server_port = self.server_state.as_ref().unwrap().port;
-        let (masked_input, shares) = self.encrypted_output.as_ref()
+        let (masked_input, shares) = self
+            .encrypted_output
+            .as_ref()
             .expect("Must call encrypt_input before send_input");
 
         // serialize: [payload_len u32][masked_input...][num_shares u32][share...]
@@ -190,7 +205,8 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
             data.write_all(&x.to_le_bytes()).unwrap();
         }
         // record the number of shares (committee members)
-        data.write_all(&(shares.len() as u32).to_le_bytes()).unwrap();
+        data.write_all(&(shares.len() as u32).to_le_bytes())
+            .unwrap();
         for share in shares {
             // each share: length + 32-byte field elements
             data.write_all(&(share.len() as u32).to_le_bytes()).unwrap();
@@ -205,18 +221,17 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::server::Server;
-    use crate::protocols::opa::{OPAServer, OPASetupParameters};
     use crate::crypto::{F256, Shamir, field_from_bytes, field_low_u128};
+    use crate::protocols::opa::{OPAServer, OPASetupParameters};
+    use crate::protocols::server::Server;
 
     #[test]
     // test that decode(encode(x)) = x
     fn test_encoding() {
-        let input : Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let input: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let expected = input.clone();
 
         let opa_server = OPAServer::new(OPASetupParameters::new(40, 16, 16, 31));
@@ -234,11 +249,11 @@ mod tests {
     #[test]
     // test that the encryption produces the correct secret shares
     fn test_encryption() {
-        let input : Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
-    
+        let input: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+
         let opa_server = OPAServer::new(OPASetupParameters::new(40, 16, 16, 31));
         let state = opa_server.get_state();
-        
+
         let mut opa_client = OPAClient::<u32>::new();
         opa_client.set_input(input);
         opa_client.set_server_state(state.clone());
@@ -246,11 +261,11 @@ mod tests {
         // encrypt the input
         opa_client.encrypt_input();
         let (_masked_input, shares) = opa_client.encrypted_output.as_ref().unwrap();
-        
+
         // reconstruct the seed from the secret shares
         let shamir = Shamir::<F256>::new(
             state.committee_size as usize,
-            state.reconstruction_threshold as usize
+            state.reconstruction_threshold as usize,
         );
         // shares is organized as shares[party_index][seed_index] = y.
         // reconstruct each seed component j from all parties' shares at index j.
@@ -270,7 +285,7 @@ mod tests {
 
         // get the last seed from the client, generated during encryption
         let last_seed = opa_client.last_seed.unwrap();
-        
+
         assert_eq!(last_seed, reconstructed_seed);
     }
 }

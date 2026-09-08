@@ -4,7 +4,7 @@
 //! [Shamir](https://doi.org/10.1145/359168.359176). OPA instantiates this over
 //! [`super::F256`].
 
-use ark_ff::{Field, UniformRand, PrimeField};
+use ark_ff::{Field, PrimeField, UniformRand};
 use ark_std::rand::Rng;
 use core::marker::PhantomData;
 
@@ -42,7 +42,7 @@ impl<F: Field> Shamir<F> {
             _marker: PhantomData,
         }
     }
-    
+
     /// Share `secret` into `num_shares` pairs `(x_i, y_i)` with `x_i = i`.
     ///
     /// # Errors
@@ -54,8 +54,12 @@ impl<F: Field> Shamir<F> {
     where
         F: UniformRand + PrimeField,
     {
-        if self.threshold < 2 { return Err(ShamirError::InvalidThreshold); }
-        if self.num_shares < self.threshold { return Err(ShamirError::InvalidNumShares); }
+        if self.threshold < 2 {
+            return Err(ShamirError::InvalidThreshold);
+        }
+        if self.num_shares < self.threshold {
+            return Err(ShamirError::InvalidNumShares);
+        }
 
         let degree = self.threshold - 1;
 
@@ -91,7 +95,9 @@ impl<F: Field> Shamir<F> {
     /// are given. [`ShamirError::ReconstructionFailed`] if a Lagrange
     /// denominator is not invertible.
     pub fn reconstruct(&self, shares: &[(F, F)]) -> Result<F, ShamirError> {
-        if shares.len() < self.threshold { return Err(ShamirError::InsufficientShares); }
+        if shares.len() < self.threshold {
+            return Err(ShamirError::InsufficientShares);
+        }
 
         // Use exactly t shares (first t provided)
         let k = self.threshold;
@@ -105,12 +111,16 @@ impl<F: Field> Shamir<F> {
             let mut numerator = F::ONE;
             let mut denominator = F::ONE;
             for j in 0..k {
-                if i == j { continue; }
+                if i == j {
+                    continue;
+                }
                 let xj = used[j].0;
                 numerator *= -xj;
                 denominator *= xi - xj;
             }
-            let denom_inv = denominator.inverse().ok_or(ShamirError::ReconstructionFailed)?;
+            let denom_inv = denominator
+                .inverse()
+                .ok_or(ShamirError::ReconstructionFailed)?;
             let li_at_zero = numerator * denom_inv;
             secret += yi * li_at_zero;
         }
@@ -119,11 +129,14 @@ impl<F: Field> Shamir<F> {
     }
 
     /// Reconstruction threshold `t`.
-    pub fn threshold(&self) -> usize { self.threshold }
+    pub fn threshold(&self) -> usize {
+        self.threshold
+    }
     /// Number of shares `n`.
-    pub fn num_shares(&self) -> usize { self.num_shares }
+    pub fn num_shares(&self) -> usize {
+        self.num_shares
+    }
 }
-
 
 #[cfg(test)]
 mod tests {

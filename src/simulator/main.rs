@@ -5,7 +5,7 @@ use jagguar::simulator::Simulator;
 
 fn main() {
     // create the simulator
-	let mut sim: Simulator<OPA<u32>> = Simulator::new();
+    let mut sim: Simulator<OPA<u32>> = Simulator::new();
 
     // create the (single) server
     // TODO: don't depend on OPA parameters explicitly

@@ -10,10 +10,10 @@
 //!
 //! A multi-party localhost run is `cargo simulator` (`--features simulator`).
 
-pub mod crypto;
-pub mod util;
-pub mod protocols;
 pub mod communicator;
+pub mod crypto;
+pub mod protocols;
+pub mod util;
 
 #[cfg(feature = "simulator")]
 pub mod simulator;

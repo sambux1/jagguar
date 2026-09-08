@@ -1,6 +1,6 @@
 use crate::communicator::Communicator;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
 
 /// Aggregation server: public parameters, input collection, and decode.
@@ -56,14 +56,18 @@ pub trait Server: Sized {
         comm.set_shutdown_flag(shutdown);
         comm.start_server().expect("failed to start server");
         self.set_communicator(comm);
-        
+
         // call the derived class's on_communicator_setup method
         self.on_communicator_setup(port);
         println!("Server listening on port {}", port);
-        
+
         // send the state back to signal that the server is ready
-        let _ = state_sender.send(self.get_state().clone()).expect("failed to send state");
-        
-        self.get_communicator().listen_loop().expect("failed to listen");
+        let _ = state_sender
+            .send(self.get_state().clone())
+            .expect("failed to send state");
+
+        self.get_communicator()
+            .listen_loop()
+            .expect("failed to listen");
     }
 }

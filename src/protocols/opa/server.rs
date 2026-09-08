@@ -4,15 +4,15 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::sync::mpsc;
 
-use crate::protocols::server::Server;
+use crate::communicator::Communicator;
+use crate::crypto::prg::populate_random_bytes;
 use crate::crypto::{
-    F256, FieldBytes, FIELD_ELEMENT_BYTES, SeedHomomorphicPRG, Shamir, field_from_bytes,
+    F256, FIELD_ELEMENT_BYTES, FieldBytes, SeedHomomorphicPRG, Shamir, field_from_bytes,
     field_low_u128,
 };
-use crate::crypto::prg::populate_random_bytes;
-use crate::util::packing::unpack_vector;
-use crate::communicator::Communicator;
 use crate::protocols::opa::client::{NUM_PARTIES_UPPER_BOUND, OUTPUT_LEN};
+use crate::protocols::server::Server;
+use crate::util::packing::unpack_vector;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -35,7 +35,7 @@ impl OPASetupParameters {
         security_parameter: u64,
         corruption_threshold: u64,
         reconstruction_threshold: u64,
-        committee_size: u64
+        committee_size: u64,
     ) -> Self {
         Self {
             security_parameter,
@@ -104,7 +104,6 @@ impl OPAState {
 
         unpack_vector(&decoded)
     }
-
 }
 
 impl OPAServer {
@@ -121,17 +120,17 @@ impl OPAServer {
 
         // deserialize each client message: [masked_input u128...][num_shares u32][share...]
         let mut committee_shares = Vec::new();
-        
+
         for raw_msg in &raw_messages {
             let mut cursor = std::io::Cursor::new(raw_msg);
             // skip masked_input (we know how long it is from the expand output length)
             cursor.set_position((4 + OUTPUT_LEN * 16) as u64);
-            
+
             // read num_shares
             let mut buf = [0u8; 4];
             cursor.read_exact(&mut buf).unwrap();
             let num_shares = u32::from_le_bytes(buf) as usize;
-            
+
             // skip to the share for this committee member
             for i in 0..num_shares {
                 cursor.read_exact(&mut buf).unwrap();
@@ -150,7 +149,7 @@ impl OPAServer {
                 }
             }
         }
-        
+
         // serialize all shares for this committee member.
         // send_on_stream prefixes each blob with its byte length, so the committee
         // derives the element count as byte_len / FIELD_ELEMENT_BYTES — do not add a redundant inner prefix.
@@ -162,29 +161,36 @@ impl OPAServer {
             }
             serialized_shares.push(data);
         }
-        
+
         // send the combined shares to the committee member
         if let Err(e) = Communicator::send_on_stream(tcp_stream, serialized_shares) {
-            eprintln!("Failed to send data to committee member {}: {}", committee_index, e);
+            eprintln!(
+                "Failed to send data to committee member {}: {}",
+                committee_index, e
+            );
         }
     }
 
     /// Called when all committee outputs have been received. This stores the
     /// messages into the state and runs aggregation.
-	fn on_committee_complete(mut state: OPAState, committee_messages: Vec<Vec<u8>>, client_messages: Vec<Vec<u8>>) {
+    fn on_committee_complete(
+        mut state: OPAState,
+        committee_messages: Vec<Vec<u8>>,
+        client_messages: Vec<Vec<u8>>,
+    ) {
         // Store the messages into the state
         state.committee_messages = committee_messages;
         state.client_messages = client_messages;
-        
+
         // Run aggregation directly using the state - clean and simple!
         OPAServer::aggregate(&state);
-	}
+    }
 }
 
 impl Server for OPAServer {
     type SetupParameters = OPASetupParameters;
     type State = OPAState;
-    
+
     /// Construct and [`Self::setup`] from `setup_parameters`.
     fn new(setup_parameters: OPASetupParameters) -> Self {
         // default initialization, delegate real work to setup function
@@ -262,27 +268,33 @@ impl Server for OPAServer {
     /// Record `port` and register share-forwarding and aggregation callbacks.
     fn on_communicator_setup(&mut self, port: u16) {
         self.state.port = port;
-        
+
         // Capture the received_messages Arc so the callback can access it
         let messages = self.get_communicator().get_received_messages();
-        
-        // Set up the callback to gather inputs and send them through the stream
-        self.get_communicator().set_signal_callback(move |stream, port| {
-            println!("Signal handler called in server");
-            let inputs = messages.lock().unwrap().clone();
-            Self::send_to_committee(stream, inputs, port);
-        });
 
-		// Configure auto-trigger for final aggregation when all committee outputs are received
-		let expected = self.state.committee_size as usize;
-		self.get_communicator().set_committee_expected_size(expected);
-		let state_for_callback = self.state.clone();
-		let client_messages_arc = self.get_communicator().get_received_messages();
-		self.get_communicator().set_committee_complete_callback(move |msgs| {
-			println!("Auto-triggering final aggregation with {} committee messages", msgs.len());
-			let client_messages = client_messages_arc.lock().unwrap().clone();
-			Self::on_committee_complete(state_for_callback.clone(), msgs, client_messages);
-		});
+        // Set up the callback to gather inputs and send them through the stream
+        self.get_communicator()
+            .set_signal_callback(move |stream, port| {
+                println!("Signal handler called in server");
+                let inputs = messages.lock().unwrap().clone();
+                Self::send_to_committee(stream, inputs, port);
+            });
+
+        // Configure auto-trigger for final aggregation when all committee outputs are received
+        let expected = self.state.committee_size as usize;
+        self.get_communicator()
+            .set_committee_expected_size(expected);
+        let state_for_callback = self.state.clone();
+        let client_messages_arc = self.get_communicator().get_received_messages();
+        self.get_communicator()
+            .set_committee_complete_callback(move |msgs| {
+                println!(
+                    "Auto-triggering final aggregation with {} committee messages",
+                    msgs.len()
+                );
+                let client_messages = client_messages_arc.lock().unwrap().clone();
+                Self::on_committee_complete(state_for_callback.clone(), msgs, client_messages);
+            });
     }
 
     /// Current public [`OPAState`].
@@ -311,7 +323,10 @@ impl Server for OPAServer {
         let committee_messages = state.committee_messages.clone();
         let client_messages = state.client_messages.clone();
 
-        println!("Performing final aggregation with {} committee messages", committee_messages.len());
+        println!(
+            "Performing final aggregation with {} committee messages",
+            committee_messages.len()
+        );
 
         // extract the secret shares from the committee messages, along with their indices
         let mut committee_outputs: Vec<(usize, Vec<FieldBytes>)> =
@@ -323,8 +338,7 @@ impl Server for OPAServer {
                 continue;
             }
             let index_bytes = &msg[9..11];
-            let committee_index =
-                u16::from_le_bytes([index_bytes[0], index_bytes[1]]) as usize;
+            let committee_index = u16::from_le_bytes([index_bytes[0], index_bytes[1]]) as usize;
 
             let mut cursor = std::io::Cursor::new(&msg[11..]);
             let mut buf = [0u8; 4];
@@ -347,7 +361,7 @@ impl Server for OPAServer {
         // reconstruct the SHPRG seed from the secret shares (Shamir over F256)
         let shamir = Shamir::<F256>::new(
             state.committee_size as usize,
-            state.reconstruction_threshold as usize
+            state.reconstruction_threshold as usize,
         );
         let seed_len = committee_outputs[0].1.len();
         let mut reconstructed_seed: Vec<u128> = Vec::with_capacity(seed_len);
@@ -358,14 +372,20 @@ impl Server for OPAServer {
                 let y = field_from_bytes(&share_vec[j]);
                 pairs.push((x, y));
             }
-            let s = shamir.reconstruct(&pairs).expect("Shamir reconstruction failed");
+            let s = shamir
+                .reconstruct(&pairs)
+                .expect("Shamir reconstruction failed");
             // Sum of client seed components can exceed 2^128; SHPRG uses Z_{2^128}.
             reconstructed_seed.push(field_low_u128(s));
         }
-        println!("Reconstructed SHPRG seed of length {}", reconstructed_seed.len());
+        println!(
+            "Reconstructed SHPRG seed of length {}",
+            reconstructed_seed.len()
+        );
 
         // expand the SHPRG seed
-        let shprg = SeedHomomorphicPRG::new_from_both_seeds(state.succinct_seed, reconstructed_seed);
+        let shprg =
+            SeedHomomorphicPRG::new_from_both_seeds(state.succinct_seed, reconstructed_seed);
         let mask = shprg.expand(OUTPUT_LEN);
         println!("Expanded SHPRG mask of length {}", mask.len());
 

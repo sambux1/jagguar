@@ -7,8 +7,8 @@
 use ark_ff::UniformRand;
 use ark_std::rand::Rng;
 use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
 use rand::distributions::{Distribution, Standard};
+use rand_chacha::ChaCha20Rng;
 
 /// Entropy-seeded ChaCha20 RNG.
 pub fn default_prg() -> ChaCha20Rng {

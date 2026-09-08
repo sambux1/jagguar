@@ -14,7 +14,6 @@ fn elements_for_bytes(target_bytes: u64, bits_per_element: u32) -> usize {
 }
 
 fn main() {
-
     let targets: Vec<(&str, u64)> = vec![
         ("100_KiB", 100 * 1024),
         ("1_MiB", ONE_MIB),
@@ -24,9 +23,7 @@ fn main() {
     let prg = SeedHomomorphicPRG::new_from_public_seed([0u8; 32]);
     let bits_per_element = prg.inner_modulus_bits();
 
-    eprintln!(
-        "SHPRG peak heap memory ({bits_per_element} bits per output element)\n"
-    );
+    eprintln!("SHPRG peak heap memory ({bits_per_element} bits per output element)\n");
 
     for (label, bytes) in targets {
         let n = elements_for_bytes(bytes, bits_per_element);

@@ -7,28 +7,27 @@
 //! reconstructs the aggregate seed, unmasks, and decodes.
 
 pub mod client;
-pub mod server;
 pub mod committee;
+pub mod server;
 
 pub use client::OPAClient;
-pub use server::{OPAServer, OPASetupParameters};
 pub use committee::OPACommittee;
-
+pub use server::{OPAServer, OPASetupParameters};
 
 // instantiate the OPA protocol
 use crate::protocols::Protocol;
-use num_traits::FromPrimitive;
 use core::marker::PhantomData;
+use num_traits::FromPrimitive;
 
 /// Protocol marker binding [`OPAClient`], [`OPAServer`], and [`OPACommittee`].
 pub struct OPA<T>(pub PhantomData<T>);
 
 impl<T> Protocol for OPA<T>
 where
-	T: Copy + Into<u32> + FromPrimitive,
+    T: Copy + Into<u32> + FromPrimitive,
 {
-	type Input = T;
-	type Server = OPAServer;
-	type Client = OPAClient<T>;
-	type Committee = OPACommittee;
+    type Input = T;
+    type Server = OPAServer;
+    type Client = OPAClient<T>;
+    type Committee = OPACommittee;
 }

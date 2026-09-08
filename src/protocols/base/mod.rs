@@ -5,11 +5,11 @@
 //! surface, not a network-neutral protocol core.
 
 pub mod client;
-pub mod server;
 pub mod committee;
 pub mod protocol;
+pub mod server;
 
 pub use client::Client;
-pub use server::Server;
 pub use committee::Committee;
 pub use protocol::Protocol;
+pub use server::Server;

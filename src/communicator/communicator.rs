@@ -1,9 +1,9 @@
-use std::net::{TcpListener, TcpStream, SocketAddr};
+use socket2::{Domain, Socket, Type};
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::io::{Read, Write};
 use std::thread;
-use socket2::{Socket, Domain, Type};
 
 /// Localhost TCP endpoint for one simulated party.
 ///
@@ -16,8 +16,8 @@ pub struct Communicator {
     received_messages: Arc<Mutex<Vec<Vec<u8>>>>,
     committee_messages: Arc<Mutex<Vec<Vec<u8>>>>,
     signal_callback: Option<Arc<dyn Fn(TcpStream, u16) + Send + Sync>>,
-	committee_expected_size: Option<usize>,
-	committee_complete_callback: Option<Arc<dyn Fn(Vec<Vec<u8>>) + Send + Sync>>,
+    committee_expected_size: Option<usize>,
+    committee_complete_callback: Option<Arc<dyn Fn(Vec<Vec<u8>>) + Send + Sync>>,
 }
 
 impl Communicator {
@@ -30,8 +30,8 @@ impl Communicator {
             received_messages: Arc::new(Mutex::new(Vec::new())),
             committee_messages: Arc::new(Mutex::new(Vec::new())),
             signal_callback: None,
-			committee_expected_size: None,
-			committee_complete_callback: None,
+            committee_expected_size: None,
+            committee_complete_callback: None,
         }
     }
 
@@ -50,19 +50,19 @@ impl Communicator {
         self.signal_callback = Some(Arc::new(callback));
     }
 
-	/// How many `committee`-prefixed messages trigger the complete callback.
-	pub fn set_committee_expected_size(&mut self, size: usize) {
-		self.committee_expected_size = Some(size);
-	}
+    /// How many `committee`-prefixed messages trigger the complete callback.
+    pub fn set_committee_expected_size(&mut self, size: usize) {
+        self.committee_expected_size = Some(size);
+    }
 
-	/// Called with a snapshot of committee messages once the expected count
-	/// is reached. The queue is cleared first.
-	pub fn set_committee_complete_callback<F>(&mut self, callback: F)
-	where
-		F: Fn(Vec<Vec<u8>>) + Send + Sync + 'static,
-	{
-		self.committee_complete_callback = Some(Arc::new(callback));
-	}
+    /// Called with a snapshot of committee messages once the expected count
+    /// is reached. The queue is cleared first.
+    pub fn set_committee_complete_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(Vec<Vec<u8>>) + Send + Sync + 'static,
+    {
+        self.committee_complete_callback = Some(Arc::new(callback));
+    }
 
     /// Flag that [`Self::listen_loop`] polls to exit.
     pub fn set_shutdown_flag(&mut self, shutdown: Arc<AtomicBool>) {
@@ -98,18 +98,18 @@ impl Communicator {
                     let messages = Arc::clone(&self.received_messages);
                     let committee_messages = Arc::clone(&self.committee_messages);
                     let callback = self.signal_callback.clone();
-					let committee_expected_size = self.committee_expected_size;
-					let committee_complete_callback = self.committee_complete_callback.clone();
+                    let committee_expected_size = self.committee_expected_size;
+                    let committee_complete_callback = self.committee_complete_callback.clone();
                     thread::spawn(move || {
-						Self::handle_connection(
-							stream,
-							addr,
-							messages,
-							committee_messages,
-							callback,
-							committee_expected_size,
-							committee_complete_callback,
-						);
+                        Self::handle_connection(
+                            stream,
+                            addr,
+                            messages,
+                            committee_messages,
+                            callback,
+                            committee_expected_size,
+                            committee_complete_callback,
+                        );
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -131,8 +131,8 @@ impl Communicator {
         messages: Arc<Mutex<Vec<Vec<u8>>>>,
         committee_messages: Arc<Mutex<Vec<Vec<u8>>>>,
         callback: Option<Arc<dyn Fn(TcpStream, u16) + Send + Sync>>,
-		committee_expected_size: Option<usize>,
-		committee_complete_callback: Option<Arc<dyn Fn(Vec<Vec<u8>>) + Send + Sync>>,
+        committee_expected_size: Option<usize>,
+        committee_complete_callback: Option<Arc<dyn Fn(Vec<Vec<u8>>) + Send + Sync>>,
     ) {
         // read exactly 6 bytes to check if it's a signal
         let mut signal_buffer = vec![0u8; 6];
@@ -150,31 +150,38 @@ impl Communicator {
                 let mut rest = Vec::new();
                 let _ = stream.read_to_end(&mut rest);
                 signal_buffer.extend_from_slice(&rest);
-                
+
                 // check if it's a committee message
                 if signal_buffer.starts_with(b"committee") {
-					let mut committee_queue = committee_messages.lock().unwrap();
-					committee_queue.push(signal_buffer);
-					let current_len = committee_queue.len();
-					println!("Committee message queued (total: {} committee messages)", current_len);
+                    let mut committee_queue = committee_messages.lock().unwrap();
+                    committee_queue.push(signal_buffer);
+                    let current_len = committee_queue.len();
+                    println!(
+                        "Committee message queued (total: {} committee messages)",
+                        current_len
+                    );
 
-					// If we have the expected number of committee messages, trigger the callback
-					if let Some(expected) = committee_expected_size {
-						if current_len == expected {
-							// Take a snapshot and clear the queue before invoking the callback
-							let batch = committee_queue.clone();
-							committee_queue.clear();
-							drop(committee_queue);
-							if let Some(ref cb) = committee_complete_callback {
-								cb(batch);
-							}
-						}
-					}
+                    // If we have the expected number of committee messages, trigger the callback
+                    if let Some(expected) = committee_expected_size {
+                        if current_len == expected {
+                            // Take a snapshot and clear the queue before invoking the callback
+                            let batch = committee_queue.clone();
+                            committee_queue.clear();
+                            drop(committee_queue);
+                            if let Some(ref cb) = committee_complete_callback {
+                                cb(batch);
+                            }
+                        }
+                    }
                 } else {
                     // regular client message
                     let mut messages = messages.lock().unwrap();
                     messages.push(signal_buffer);
-                    println!("Received message from {:?} (total: {} messages)", addr, messages.len());
+                    println!(
+                        "Received message from {:?} (total: {} messages)",
+                        addr,
+                        messages.len()
+                    );
                 }
             }
             Err(e) => {
@@ -244,7 +251,7 @@ impl Communicator {
             data.extend_from_slice(&len.to_le_bytes());
             data.extend_from_slice(input);
         }
-        
+
         // Send the data through the TCP stream
         stream.write_all(&data)?;
         stream.flush()?;
