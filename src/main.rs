@@ -1,3 +1,7 @@
+//! Scratch binary for local experiments.
+//!
+//! For a multi-party OPA run, use `cargo simulator`.
+
 use jagguar::crypto::{F256, SeedHomomorphicPRG, Shamir};
 use std::time::Instant;
 use rand::SeedableRng;

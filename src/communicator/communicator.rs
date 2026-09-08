@@ -5,6 +5,10 @@ use std::io::{Read, Write};
 use std::thread;
 use socket2::{Socket, Domain, Type};
 
+/// Localhost TCP endpoint for one simulated party.
+///
+/// Outbound connects bind this party's `port` on `127.0.0.1` so the server
+/// can treat the peer port as an identity.
 pub struct Communicator {
     port: u16,
     listener: Option<TcpListener>,
@@ -17,6 +21,7 @@ pub struct Communicator {
 }
 
 impl Communicator {
+    /// Endpoint that will bind or connect from `port`.
     pub fn new(port: u16) -> Self {
         Self {
             port,
@@ -30,10 +35,14 @@ impl Communicator {
         }
     }
 
+    /// Local bind port.
     pub fn port(&self) -> u16 {
         self.port
     }
 
+    /// Called when a peer sends the 6-byte `signal` prefix.
+    ///
+    /// The callback receives the open stream and the peer's source port.
     pub fn set_signal_callback<F>(&mut self, callback: F)
     where
         F: Fn(TcpStream, u16) + Send + Sync + 'static,
@@ -41,10 +50,13 @@ impl Communicator {
         self.signal_callback = Some(Arc::new(callback));
     }
 
+	/// How many `committee`-prefixed messages trigger the complete callback.
 	pub fn set_committee_expected_size(&mut self, size: usize) {
 		self.committee_expected_size = Some(size);
 	}
 
+	/// Called with a snapshot of committee messages once the expected count
+	/// is reached. The queue is cleared first.
 	pub fn set_committee_complete_callback<F>(&mut self, callback: F)
 	where
 		F: Fn(Vec<Vec<u8>>) + Send + Sync + 'static,
@@ -52,16 +64,26 @@ impl Communicator {
 		self.committee_complete_callback = Some(Arc::new(callback));
 	}
 
+    /// Flag that [`Self::listen_loop`] polls to exit.
     pub fn set_shutdown_flag(&mut self, shutdown: Arc<AtomicBool>) {
         self.shutdown = Some(shutdown);
     }
 
+    /// Bind `0.0.0.0:port`.
     pub fn start_server(&mut self) -> std::io::Result<()> {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port))?;
         self.listener = Some(listener);
         Ok(())
     }
 
+    /// Accept connections until the shutdown flag is set.
+    ///
+    /// Each connection is handled on a new thread. The listener is
+    /// non-blocking; idle accepts sleep 50 ms.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Self::start_server`] has not been called.
     pub fn listen_loop(&self) -> std::io::Result<()> {
         let _ = self.listener.as_ref().unwrap().set_nonblocking(true);
         loop {
@@ -101,6 +123,8 @@ impl Communicator {
         Ok(())
     }
 
+    /// Classify the first 6 bytes as `signal`, else read the rest and queue
+    /// as `committee` or a client payload.
     fn handle_connection(
         mut stream: TcpStream,
         addr: SocketAddr,
@@ -159,14 +183,18 @@ impl Communicator {
         }
     }
 
+    /// Queued client payloads (shared with callbacks).
     pub fn get_received_messages(&self) -> Arc<Mutex<Vec<Vec<u8>>>> {
         Arc::clone(&self.received_messages)
     }
 
+    /// Queued `committee`-prefixed payloads (shared with callbacks).
     pub fn get_committee_messages(&self) -> Arc<Mutex<Vec<Vec<u8>>>> {
         Arc::clone(&self.committee_messages)
     }
 
+    /// Connect to `127.0.0.1:server_port` from this party's local port
+    /// (`SO_REUSEADDR`).
     fn connect_to_server(&self, server_port: u16) -> std::io::Result<TcpStream> {
         // create a socket and bind to our local port
         let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
@@ -183,18 +211,21 @@ impl Communicator {
         Ok(stream)
     }
 
+    /// Write `data` to the server and close.
     pub fn send_to_server(&self, server_port: u16, data: &[u8]) -> std::io::Result<()> {
         let mut stream = self.connect_to_server(server_port)?;
         stream.write_all(data)?;
         Ok(())
     }
 
+    /// Send the `signal` prefix and return the open stream.
     pub fn signal_server(&self, server_port: u16) -> std::io::Result<TcpStream> {
         let mut stream = self.connect_to_server(server_port)?;
         stream.write_all(b"signal")?;
         Ok(stream)
     }
 
+    /// Signal the server and read the response to EOF.
     pub fn receive_from_server(&self, server_port: u16) -> std::io::Result<Vec<u8>> {
         let mut stream = self.signal_server(server_port)?;
         let mut buffer = Vec::new();
@@ -203,6 +234,7 @@ impl Communicator {
         Ok(buffer)
     }
 
+    /// Write length-prefixed blobs on `stream`, then shut down the write half.
     pub fn send_on_stream(mut stream: TcpStream, inputs: Vec<Vec<u8>>) -> std::io::Result<()> {
         // serialize all inputs together
         let mut data = Vec::new();

@@ -1,6 +1,18 @@
+//! Pack integers into `u32` words and unpack them.
+//!
+//! Used by OPA to compress inputs before SHPRG masking. `T` must be at most
+//! 32 bits; packing `u32` is a no-op.
+
 use std::mem;
 
-// Pack a vector of elements into a vector of u32s
+/// Pack `T` values into `u32` words, `32 / bitwidth(T)` per word, low bits first.
+///
+/// A trailing partial word is emitted if `vector.len()` is not a multiple of
+/// the compression factor.
+///
+/// # Panics
+///
+/// Panics if `T` is larger than 32 bits.
 pub fn pack_vector<T>(vector: &Vec<T>) -> Vec<u32>
 where
     T: Copy + Into<u32>,
@@ -36,7 +48,15 @@ where
     out
 }
 
-// Unpack a vector of u32s into a vector of smaller bitwidth
+/// Unpack `u32` words into `T` values, `32 / bitwidth(T)` per word, low bits first.
+///
+/// Each word yields a full set of `T`s, so a packed vector whose original
+/// length was not a multiple of the compression factor grows on unpack
+/// (trailing zeros).
+///
+/// # Panics
+///
+/// Panics if `T` is larger than 32 bits, or if a field does not fit in `T`.
 pub fn unpack_vector<T>(vector: &Vec<u32>) -> Vec<T>
 where
     T: Copy + num_traits::FromPrimitive,

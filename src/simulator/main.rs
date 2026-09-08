@@ -1,3 +1,5 @@
+//! Example localhost OPA run (`cargo simulator`).
+
 use jagguar::protocols::opa::{OPA, OPASetupParameters};
 use jagguar::simulator::Simulator;
 

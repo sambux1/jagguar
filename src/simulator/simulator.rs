@@ -1,3 +1,5 @@
+//! Thread-per-party localhost run of a [`crate::protocols::Protocol`].
+
 use crate::protocols::Protocol;
 use crate::protocols::server::Server;
 use crate::protocols::client::Client;
@@ -8,13 +10,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc;
 
+/// First port in the simulator pool (server is typically this port).
 const STARTING_PORT: u16 = 10000;
+/// Size of the allocatable port range.
 const DEFAULT_MAX_PORTS: usize = 1000;
+/// Length of each randomly generated client input.
 const INPUT_LEN: usize = 1024;
 
+/// Localhost run of protocol `P`.
 pub struct Simulator<P: Protocol> {
+	/// Set by [`Self::teardown`] to stop the server listen loop.
 	server_shutdown: Option<Arc<AtomicBool>>,
+	/// Public server state, set after [`Self::start_server`].
 	server_state: Option<<P::Server as Server>::State>,
+	/// Committee port offsets from the server, set by [`Self::start_server`].
 	committee_port_offsets: Option<Vec<u16>>,
 	/// Optional channel used by the server to send its final output back to the simulator
 	server_output: Option<mpsc::Receiver<Vec<u32>>>,
@@ -28,6 +37,7 @@ pub struct Simulator<P: Protocol> {
 }
 
 impl<P: Protocol> Simulator<P> {
+	/// Empty simulator with a port pool starting at 10000.
 	pub fn new() -> Self {
 		Self {
 			server_shutdown: Some(Arc::new(AtomicBool::new(false))),
@@ -41,6 +51,11 @@ impl<P: Protocol> Simulator<P> {
 		}
 	}
 
+	/// Spawn the server thread, wait for public state, install the output channel.
+	///
+	/// # Panics
+	///
+	/// Panics if no port is available or the server fails to publish state.
 	pub fn start_server(&mut self, server_parameters: <P::Server as Server>::SetupParameters)
 	where
 		P::Server: Send + 'static,
@@ -73,6 +88,13 @@ impl<P: Protocol> Simulator<P> {
 		self.server_state = Some(state);
 	}
 
+	/// Spawn `num_clients` threads. Each samples a random 1024-vector
+	/// in `[0, 2^20)`, reports it on the input channel, encrypts, and sends.
+	///
+	/// # Panics
+	///
+	/// Panics if [`Self::start_server`] has not run, or if a port cannot be
+	/// allocated.
 	pub fn start_clients(&mut self, num_clients: usize)
 	where
 		<P::Server as Server>::State: Clone + Send + 'static,
@@ -120,6 +142,12 @@ impl<P: Protocol> Simulator<P> {
 		println!("{} clients started", num_clients);
 	}
 
+	/// Spawn one committee thread per offset. Ports are
+	/// `10000 + offset`, not taken from the pool.
+	///
+	/// # Panics
+	///
+	/// Panics if [`Self::start_server`] has not run.
 	pub fn start_committee(&mut self)
 	where
 		<P::Server as Server>::State: Clone + Send + 'static,
@@ -148,6 +176,8 @@ impl<P: Protocol> Simulator<P> {
 		}
 	}
 
+	/// Block until `expected_count` client inputs arrive (or the channel
+	/// disconnects) and store their elementwise sum as the expected output.
 	pub fn collect_client_inputs(&mut self, expected_count: usize) -> Vec<Vec<u32>> {
 		let mut inputs = Vec::new();
 		if let Some(ref receiver) = self.client_input_channel {
@@ -191,6 +221,10 @@ impl<P: Protocol> Simulator<P> {
 		inputs
 	}
 
+	/// Non-blocking: print whether the server output matches the expected sum.
+	///
+	/// Prints a placeholder if the server has not sent yet. Call
+	/// [`Self::collect_client_inputs`] first to populate the expected sum.
 	pub fn output(&mut self) {
 		match self.server_output {
 			Some(ref receiver) => match receiver.try_recv() {
@@ -228,6 +262,7 @@ impl<P: Protocol> Simulator<P> {
 		}
 	}
 
+	/// Set the server shutdown flag. Does not join party threads.
 	pub fn teardown(&mut self) {
 		// send the kill signal to the server through the shutdown flag
 		self.server_shutdown.as_ref().unwrap().store(true, Ordering::Relaxed);
