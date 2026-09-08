@@ -1,49 +1,13 @@
-//! Scratch binary for local experiments.
+//! Example of using Jagguar internals.
 //!
 //! For a multi-party OPA run, use `cargo simulator`.
 
-use jagguar::crypto::{F256, SeedHomomorphicPRG, Shamir};
-use std::time::Instant;
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
-
-use jagguar::protocols::client::Client;
-use jagguar::protocols::server::Server;
-use jagguar::protocols::opa::{OPAClient, OPAServer, OPASetupParameters};
+use jagguar::crypto::SeedHomomorphicPRG;
 
 fn main() {
-    let start = Instant::now();
+    println!("This is an example of how to use jagguar internals.");
 
-    let seed = [0u8; 32];
-    
-    let prg_0 = SeedHomomorphicPRG::new_from_public_seed(seed);
-    let prg_1 = SeedHomomorphicPRG::new_from_public_seed(seed);
-    
-    let after_sample = Instant::now();
-    println!("Sample: {:?}", after_sample.duration_since(start));
-    
-    prg_0.expand(4096);
-    prg_1.expand(4096);
-    
-    let after_expand = Instant::now();
-    println!("Expand: {:?}", after_expand.duration_since(after_sample));
-
-    let shamir = Shamir::<F256>::new(31, 16);
-    println!("Shamir {} / {}", shamir.threshold(), shamir.num_shares());
-    let mut rng = ChaCha20Rng::from_entropy();
-    let shares = shamir.share(F256::from(17), &mut rng).unwrap();
-    // reconstruct the secret
-    let secret = shamir.reconstruct(&shares).unwrap();
-    println!("Secret: {:?}", secret);
-    println!("Opened secret: {:?}", secret);
-
-    let opa_server = OPAServer::new(OPASetupParameters::new(40, 16, 16, 31));
-    let state = opa_server.get_state();
-    println!("State: {:?}", state);
-
-    let mut opa_client = OPAClient::<u32>::new();
-    opa_client.set_input(vec![1, 2, 3, 7, 5, 6, 4, 8]);
-    println!("Input: {:?}", opa_client.get_input());
-    opa_client.set_server_state(state.clone());
-    opa_client.encrypt_input();
+    let prg = SeedHomomorphicPRG::new();
+    let output = prg.expand(8);
+    println!("SHPRG expand(8): {output:?}");
 }
