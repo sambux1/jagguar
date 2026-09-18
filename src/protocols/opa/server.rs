@@ -11,6 +11,7 @@ use crate::crypto::{
     field_low_u128,
 };
 use crate::protocols::opa::client::{NUM_PARTIES_UPPER_BOUND, OUTPUT_LEN};
+use crate::protocols::opa::params::PublicParams;
 use crate::protocols::server::Server;
 use crate::util::packing::unpack_vector;
 use rand::SeedableRng;
@@ -69,6 +70,20 @@ pub struct OPAState {
     pub client_messages: Vec<Vec<u8>>,
     /// Raw committee messages, filled before [`OPAServer::aggregate`].
     pub committee_messages: Vec<Vec<u8>>,
+}
+
+impl OPAState {
+    /// Client-visible crypto parameters. Ports and queued messages are omitted.
+    pub fn public_params(&self) -> PublicParams {
+        PublicParams {
+            succinct_seed: self.succinct_seed,
+            security_parameter: self.security_parameter,
+            corruption_threshold: self.corruption_threshold,
+            reconstruction_threshold: self.reconstruction_threshold,
+            committee_size: self.committee_size as u16,
+            output_len: OUTPUT_LEN as u32,
+        }
+    }
 }
 
 /// OPA aggregation server.

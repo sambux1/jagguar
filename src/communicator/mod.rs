@@ -4,6 +4,9 @@
 //! classified by a prefix: `signal` (6 bytes) opens a callback stream;
 //! `committee` is queued until the expected committee size is reached;
 //! anything else is a client payload. There is no authentication.
+//!
+//! [`wire`] holds party IDs and the codec used by typed messages.
 
 pub mod communicator;
+pub mod wire;
 pub use communicator::Communicator;
