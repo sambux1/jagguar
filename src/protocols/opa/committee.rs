@@ -31,9 +31,16 @@ impl Committee for OPACommittee {
         }
     }
 
-    /// Store the server's public [`OPAState`].
+    fn request_state(&mut self) -> std::io::Result<()> {
+        self.server_state = Some(OPAState::from_reply(
+            &self.communicator.request_state()?,
+        )?);
+        Ok(())
+    }
+
+    /// Store the server's [`OPAState`].
     fn set_server_state(&mut self, state: Self::ServerState) {
-        self.server_state = Some(state.clone());
+        self.server_state = Some(state);
     }
 
     /// Signal the server and parse length-prefixed Shamir shares.

@@ -2,10 +2,12 @@
 pub trait Client<T> {
     /// Encrypted payload produced by [`Self::encrypt_input`].
     type Output;
-    /// Server public state (must match [`super::Server::State`]).
+    /// Public state fetched from the server.
     type ServerState;
 
     fn new() -> Self;
+    /// Request public state over HTTP.
+    fn request_state(&mut self) -> std::io::Result<()>;
     fn set_server_state(&mut self, state: Self::ServerState);
     fn set_input(&mut self, input: Vec<T>);
     fn encrypt_input(&mut self);

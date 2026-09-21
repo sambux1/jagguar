@@ -21,8 +21,6 @@ const INPUT_LEN: usize = 1024;
 pub struct Simulator<P: Protocol> {
     /// Set by [`Self::teardown`] to stop the server listen loop.
     server_shutdown: Option<Arc<AtomicBool>>,
-    /// Public server state, set after [`Self::start_server`].
-    server_state: Option<<P::Server as Server>::State>,
     /// Committee port offsets from the server, set by [`Self::start_server`].
     committee_port_offsets: Option<Vec<u16>>,
     /// Optional channel used by the server to send its final output back to the simulator
@@ -41,7 +39,6 @@ impl<P: Protocol> Simulator<P> {
     pub fn new() -> Self {
         Self {
             server_shutdown: Some(Arc::new(AtomicBool::new(false))),
-            server_state: None,
             committee_port_offsets: None,
             server_output: None,
             client_input_channel: None,
@@ -51,21 +48,17 @@ impl<P: Protocol> Simulator<P> {
         }
     }
 
-    /// Spawn the server thread, wait for public state, install the output channel.
+    /// Spawn the server thread and wait until HTTP `request_state` succeeds.
     ///
     /// # Panics
     ///
-    /// Panics if no port is available or the server fails to publish state.
+    /// Panics if no port is available or the server never becomes reachable.
     pub fn start_server(&mut self, server_parameters: <P::Server as Server>::SetupParameters)
     where
         P::Server: Send + 'static,
         <P::Server as Server>::SetupParameters: Send + 'static,
-        <P::Server as Server>::State: Send,
     {
         let shutdown = Arc::clone(self.server_shutdown.as_ref().unwrap());
-
-        // create a channel to send the server state back to the simulator
-        let (state_sender, state_receiver) = mpsc::channel();
 
         // create a channel for the server to send its final output back
         let (output_sender, output_receiver) = mpsc::channel();
@@ -80,12 +73,16 @@ impl<P: Protocol> Simulator<P> {
         // run the server in a thread
         let port = self.port_pool.allocate_port().unwrap();
         std::thread::spawn(move || {
-            server.setup_communicator(port, shutdown, state_sender);
+            server.setup_communicator(port, shutdown);
         });
 
-        // wait for server to be ready and receive the state
-        let state = state_receiver.recv().expect("Server failed to start");
-        self.server_state = Some(state);
+        loop {
+            let mut probe = P::Client::new();
+            if probe.request_state().is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 
     /// Spawn `num_clients` threads. Each samples a random 1024-vector
@@ -97,7 +94,6 @@ impl<P: Protocol> Simulator<P> {
     /// allocated.
     pub fn start_clients(&mut self, num_clients: usize)
     where
-        <P::Server as Server>::State: Clone + Send + 'static,
         P::Client: Send + 'static,
         P::Input: From<u32>,
     {
@@ -110,10 +106,11 @@ impl<P: Protocol> Simulator<P> {
             let port = self.port_pool.allocate_port().unwrap();
 
             let mut client = P::Client::new();
-            client.set_server_state(self.server_state.as_ref().unwrap().clone());
             let sender = input_sender.clone();
 
             std::thread::spawn(move || {
+                client.request_state().expect("request state");
+
                 // generate a random input
                 let mut rng = default_prg();
                 let mut input = vec![0u32; INPUT_LEN];
@@ -150,33 +147,30 @@ impl<P: Protocol> Simulator<P> {
     /// Panics if [`Self::start_server`] has not run.
     pub fn start_committee(&mut self)
     where
-        <P::Server as Server>::State: Clone + Send + 'static,
         P::Committee: Send + 'static,
     {
-        // make sure server state and port offsets are set
-        assert!(self.server_state.is_some(), "Server state is not set");
         assert!(
             self.committee_port_offsets.is_some(),
             "Committee port offsets are not set"
         );
 
-        let server_state = self.server_state.as_ref().unwrap();
         let port_offsets = self.committee_port_offsets.as_ref().unwrap();
 
         for (_, port_offset) in port_offsets.iter().enumerate() {
             let port = STARTING_PORT + *port_offset;
 
-            // make a new committee member and set its server state
             let mut committee_member = P::Committee::new(port);
-            committee_member.set_server_state(server_state.clone());
 
             // run the committee member in a thread
             std::thread::spawn(move || {
+                committee_member.request_state().expect("request state");
                 committee_member.retrieve_inputs();
                 committee_member.aggregate();
                 committee_member.send_output();
             });
         }
+
+        println!("{} committee members started", port_offsets.len());
     }
 
     /// Block until `expected_count` client inputs arrive (or the channel

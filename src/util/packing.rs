@@ -106,7 +106,7 @@ mod tests {
         assert!(packed.len() < input.len());
 
         // unpack the input and check that the original size is restored
-        let unpacked = unpack_vector(&packed);
+        let unpacked: Vec<u16> = unpack_vector(&packed);
         assert!(unpacked.len() == input.len());
 
         // check that the unpacked input is the same as the original input

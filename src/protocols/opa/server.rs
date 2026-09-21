@@ -5,17 +5,19 @@ use std::net::TcpStream;
 use std::sync::mpsc;
 
 use crate::communicator::Communicator;
+use crate::communicator::wire::{self, encode};
 use crate::crypto::prg::populate_random_bytes;
 use crate::crypto::{
     F256, FIELD_ELEMENT_BYTES, FieldBytes, SeedHomomorphicPRG, Shamir, field_from_bytes,
     field_low_u128,
 };
 use crate::protocols::opa::client::{NUM_PARTIES_UPPER_BOUND, OUTPUT_LEN};
-use crate::protocols::opa::params::PublicParams;
+use crate::protocols::opa::messages::FromServer;
 use crate::protocols::server::Server;
 use crate::util::packing::unpack_vector;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use serde::{Deserialize, Serialize};
 
 /// Public OPA parameters.
 ///
@@ -48,7 +50,7 @@ impl OPASetupParameters {
 }
 
 /// Public OPA state distributed to clients and committee members.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OPAState {
     /// SHPRG public-parameter seed.
     pub succinct_seed: [u8; 32],
@@ -65,25 +67,14 @@ pub struct OPAState {
     /// Server bind port (set when the communicator starts).
     pub port: u16,
     /// Optional channel for sending decoded output back to the simulator.
+    #[serde(skip)]
     pub output_sender: Option<mpsc::Sender<Vec<u32>>>,
     /// Optional cache of messages used during aggregation.
+    #[serde(skip)]
     pub client_messages: Vec<Vec<u8>>,
     /// Raw committee messages, filled before [`OPAServer::aggregate`].
+    #[serde(skip)]
     pub committee_messages: Vec<Vec<u8>>,
-}
-
-impl OPAState {
-    /// Client-visible crypto parameters. Ports and queued messages are omitted.
-    pub fn public_params(&self) -> PublicParams {
-        PublicParams {
-            succinct_seed: self.succinct_seed,
-            security_parameter: self.security_parameter,
-            corruption_threshold: self.corruption_threshold,
-            reconstruction_threshold: self.reconstruction_threshold,
-            committee_size: self.committee_size as u16,
-            output_len: OUTPUT_LEN as u32,
-        }
-    }
 }
 
 /// OPA aggregation server.
@@ -94,6 +85,15 @@ pub struct OPAServer {
 }
 
 impl OPAState {
+    /// Decode a `FromServer::State` reply.
+    pub fn from_reply(bytes: &[u8]) -> std::io::Result<Self> {
+        match wire::decode::<FromServer>(bytes) {
+            Ok(FromServer::State(state)) => Ok(state),
+            Ok(_) => Err(std::io::Error::other("reply was not state")),
+            Err(e) => Err(std::io::Error::other(e)),
+        }
+    }
+
     /// Decode an unmasked aggregate, treating every slot as payload.
     pub fn decode_output(&self, output: Vec<u128>) -> Vec<u32> {
         let len = output.len();
@@ -310,6 +310,10 @@ impl Server for OPAServer {
                 let client_messages = client_messages_arc.lock().unwrap().clone();
                 Self::on_committee_complete(state_for_callback.clone(), msgs, client_messages);
             });
+
+        let reply = FromServer::State(self.state.clone());
+        let bytes = encode(&reply).expect("encode server state");
+        self.get_communicator().start_http_communicator(bytes);
     }
 
     /// Current public [`OPAState`].

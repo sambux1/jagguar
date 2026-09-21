@@ -22,6 +22,7 @@ pub const OUTPUT_LEN: usize = 4096;
 pub struct OPAClient<T> {
     input: Option<Vec<T>>,
     server_state: Option<OPAState>,
+    communicator: Communicator,
     encrypted_output: Option<(Vec<u128>, Vec<Vec<FieldBytes>>)>,
     #[cfg(test)]
     last_seed: Option<Vec<u128>>,
@@ -31,15 +32,6 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
     /// Input vector, if [`crate::protocols::Client::set_input`] has been called.
     pub fn get_input(&self) -> Option<&Vec<T>> {
         self.input.as_ref()
-    }
-
-    /// Helper for tests and debugging: decode an encoded (already unmasked)
-    /// aggregate using the client's view of the server state.
-    pub fn decode_output(&self, output: Vec<u128>) -> Vec<u32> {
-        self.server_state
-            .as_ref()
-            .expect("OPA client server state must be set.")
-            .decode_output(output)
     }
 
     /// No-op. Clients do not run a setup protocol.
@@ -88,16 +80,24 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
     type Output = (Vec<u128>, Vec<Vec<FieldBytes>>);
     type ServerState = OPAState;
 
-    /// Empty client. Call [`Self::set_input`] and [`Self::set_server_state`]
+    /// Empty client. Call [`Self::set_input`] and [`Self::request_state`]
     /// before [`Self::encrypt_input`].
     fn new() -> Self {
         Self {
             input: None,
             server_state: None,
+            communicator: Communicator::new(0),
             encrypted_output: None,
             #[cfg(test)]
             last_seed: None,
         }
+    }
+
+    fn request_state(&mut self) -> std::io::Result<()> {
+        self.server_state = Some(OPAState::from_reply(
+            &self.communicator.request_state()?,
+        )?);
+        Ok(())
     }
 
     /// Store `input`. Values must be in `[0, MAX_FIELD_VALUE)`.
@@ -115,7 +115,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         self.input = Some(input);
     }
 
-    /// Store the server's public [`OPAState`].
+    /// Store the server's [`OPAState`].
     fn set_server_state(&mut self, state: Self::ServerState) {
         self.server_state = Some(state);
     }
@@ -242,7 +242,7 @@ mod tests {
         opa_client.set_server_state(state.clone());
 
         let encoded_input = opa_client.encode_input();
-        let decoded_input = opa_client.decode_output(encoded_input);
+        let decoded_input = state.decode_output(encoded_input);
         assert_eq!(expected, decoded_input);
     }
 

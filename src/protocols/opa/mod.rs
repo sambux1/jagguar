@@ -9,14 +9,12 @@
 pub mod client;
 pub mod committee;
 pub mod messages;
-pub mod params;
 pub mod server;
 
 pub use client::OPAClient;
 pub use committee::OPACommittee;
 pub use messages::{FromServer, Inputs, SeedShare, ToServer, Upload};
-pub use params::PublicParams;
-pub use server::{OPAServer, OPASetupParameters};
+pub use server::{OPAServer, OPASetupParameters, OPAState};
 
 // instantiate the OPA protocol
 use crate::protocols::Protocol;

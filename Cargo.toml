@@ -25,6 +25,7 @@ socket2 = "0.5"
 serde = { version = "1", features = ["derive"] }
 bincode = { version = "2", features = ["serde"] }
 thiserror = "2"
+tiny_http = "0.12"
 
 [[bin]]
 name = "simulator"

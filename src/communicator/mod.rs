@@ -8,5 +8,6 @@
 //! [`wire`] holds party IDs and the codec used by typed messages.
 
 pub mod communicator;
+pub mod http;
 pub mod wire;
 pub use communicator::Communicator;

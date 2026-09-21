@@ -20,8 +20,7 @@ fn main() {
     // loop over all received messages and add them to a list
     let client_inputs = sim.collect_client_inputs(num_clients);
     println!("Collected {} client inputs", client_inputs.len());
-
-    println!("Running the simulator...");
+    println!("Waiting for client uploads...");
 
     // let the simulator run for 5 seconds
     std::thread::sleep(std::time::Duration::from_secs(5));

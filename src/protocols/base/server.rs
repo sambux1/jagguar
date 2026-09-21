@@ -39,19 +39,13 @@ pub trait Server: Sized {
         // default: do nothing
     }
 
-    /// Bind `port`, publish [`Self::State`], and run the listen loop until
-    /// `shutdown` is set.
+    /// Bind `port` and run the listen loop until `shutdown` is set.
     ///
     /// # Panics
     ///
     /// Panics if the listener fails to bind or the listen loop returns an
     /// error.
-    fn setup_communicator(
-        &mut self,
-        port: u16,
-        shutdown: Arc<AtomicBool>,
-        state_sender: Sender<Self::State>,
-    ) {
+    fn setup_communicator(&mut self, port: u16, shutdown: Arc<AtomicBool>) {
         let mut comm = Communicator::new(port);
         comm.set_shutdown_flag(shutdown);
         comm.start_server().expect("failed to start server");
@@ -60,11 +54,6 @@ pub trait Server: Sized {
         // call the derived class's on_communicator_setup method
         self.on_communicator_setup(port);
         println!("Server listening on port {}", port);
-
-        // send the state back to signal that the server is ready
-        let _ = state_sender
-            .send(self.get_state().clone())
-            .expect("failed to send state");
 
         self.get_communicator()
             .listen_loop()
