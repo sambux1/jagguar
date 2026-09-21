@@ -11,6 +11,6 @@ pub trait Client<T> {
     fn set_server_state(&mut self, state: Self::ServerState);
     fn set_input(&mut self, input: Vec<T>);
     fn encrypt_input(&mut self);
-    /// Send the encrypted input. `port` is this client's local bind port.
-    fn send_input(&mut self, port: u16);
+    /// Send the encrypted input to the server.
+    fn send_input(&mut self);
 }

@@ -186,12 +186,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
     }
 
     /// Send the masked input and per-committee shares to the server.
-    fn send_input(&mut self, port: u16) {
-        // create a communicator on the passed port
-        let communicator = Communicator::new(port);
-
-        // establish a connection to the server through the communicator
-        let server_port = self.server_state.as_ref().unwrap().port;
+    fn send_input(&mut self) {
         let (masked_input, shares) = self
             .encrypted_output
             .as_ref()
@@ -215,7 +210,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
             }
         }
 
-        if let Err(e) = communicator.send_to_server(server_port, &data) {
+        if let Err(e) = self.communicator.send_upload(&data) {
             eprintln!("Failed to send to server: {}", e);
         }
     }

@@ -90,8 +90,7 @@ impl<P: Protocol> Simulator<P> {
     ///
     /// # Panics
     ///
-    /// Panics if [`Self::start_server`] has not run, or if a port cannot be
-    /// allocated.
+    /// Panics if a client cannot request state.
     pub fn start_clients(&mut self, num_clients: usize)
     where
         P::Client: Send + 'static,
@@ -103,8 +102,6 @@ impl<P: Protocol> Simulator<P> {
 
         // create the clients
         for _ in 0..num_clients {
-            let port = self.port_pool.allocate_port().unwrap();
-
             let mut client = P::Client::new();
             let sender = input_sender.clone();
 
@@ -131,8 +128,7 @@ impl<P: Protocol> Simulator<P> {
                 client.encrypt_input();
 
                 // send the input to the server
-                // the port is automatically passed by value, so this is thread-safe
-                client.send_input(port);
+                client.send_input();
             });
         }
 
