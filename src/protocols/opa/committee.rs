@@ -1,10 +1,10 @@
 //! OPA committee member.
 
-use std::io::{Cursor, Read, Write};
-
 use crate::communicator::Communicator;
+use crate::communicator::wire::{CommitteeIndex, decode, encode};
 use crate::crypto::{F256, FIELD_ELEMENT_BYTES, FieldBytes, field_from_bytes, field_to_bytes};
 use crate::protocols::committee::Committee;
+use crate::protocols::opa::messages::{FromServer, ToServer};
 use crate::protocols::opa::server::OPAState;
 
 /// Committee member: sum Shamir y-shares over [`crate::crypto::F256`] and return
@@ -41,41 +41,24 @@ impl Committee for OPACommittee {
         self.server_state = Some(state);
     }
 
-    /// Fetch this member's shares with `POST /committee-fetch` and parse them.
+    /// Fetch this member's shares with `POST /committee-fetch`.
     ///
-    /// The body is this member's index. The response is length-prefixed shares:
-    /// `[byte_len u32][byte_len bytes of field elements LE]...`.
+    /// The body is [`ToServer::RequestInputs`]. The response is [`FromServer::Inputs`].
     fn retrieve_inputs(&mut self) {
-        let committee_index = self.committee_index();
-        let inputs = self
+        let request = ToServer::RequestInputs {
+            index: self.committee_index(),
+        };
+        let request_bytes = encode(&request).expect("encode committee fetch");
+        let reply = self
             .communicator
-            .fetch_committee_inputs(&committee_index.to_le_bytes())
+            .fetch_committee_inputs(&request_bytes)
             .expect("Failed to receive inputs from server");
+        let FromServer::Inputs(inputs) = decode(&reply).expect("decode committee inputs") else {
+            panic!("committee fetch reply was not inputs");
+        };
 
-        let mut cursor = Cursor::new(&inputs);
-        let mut shares = Vec::new();
-
-        while cursor.position() < inputs.len() as u64 {
-            let mut len_bytes = [0u8; 4];
-            cursor
-                .read_exact(&mut len_bytes)
-                .expect("Failed to read length prefix");
-            let byte_len = u32::from_le_bytes(len_bytes) as usize;
-            let share_len = byte_len / FIELD_ELEMENT_BYTES;
-
-            let mut share = Vec::with_capacity(share_len);
-            for _ in 0..share_len {
-                let mut xbuf = [0u8; FIELD_ELEMENT_BYTES];
-                cursor
-                    .read_exact(&mut xbuf)
-                    .expect("Failed to read share element");
-                share.push(xbuf);
-            }
-            shares.push(share);
-        }
-
-        println!("Parsed {} secret shares from server", shares.len());
-        self.input_shares = Some(shares);
+        println!("Parsed {} secret shares from server", inputs.shares.len());
+        self.input_shares = Some(inputs.shares);
     }
 
     /// Sum shares componentwise in [`crate::crypto::F256`].
@@ -120,29 +103,22 @@ impl Committee for OPACommittee {
         );
     }
 
-    /// Send the summed share. Committee index is `local_port - server_port - 1`.
+    /// Send the summed share as [`ToServer::CommitteeUpload`].
     ///
     /// # Panics
     ///
     /// Panics if [`Self::aggregate`] has not been called, or if the port
     /// layout is not `server_port + 1 + index`.
     fn send_output(&mut self) {
-        let mut data = Vec::new();
-        data.extend_from_slice(b"committee");
-
-        let committee_index = self.committee_index();
-        data.extend_from_slice(&committee_index.to_le_bytes());
-
         let share = self
             .output_share
-            .as_ref()
+            .clone()
             .expect("Must call aggregate before send_output");
-        // serialize: length (u32) followed by 32-byte field elements
-        data.write_all(&(share.len() as u32).to_le_bytes()).unwrap();
-        for x in share {
-            data.write_all(x).unwrap();
-        }
-
+        let message = ToServer::CommitteeUpload {
+            index: self.committee_index(),
+            data: share,
+        };
+        let data = encode(&message).expect("encode committee output");
         self.communicator
             .send_committee_output(&data)
             .expect("Failed to send output share to server");
@@ -155,11 +131,12 @@ impl OPACommittee {
     /// # Panics
     ///
     /// Panics if the port layout is not `server_port + 1 + index`.
-    fn committee_index(&self) -> u16 {
+    fn committee_index(&self) -> CommitteeIndex {
         let server_port = self.server_state.as_ref().unwrap().port;
         let local_port = self.communicator.port();
-        local_port
+        let index = local_port
             .checked_sub(server_port + 1)
-            .expect("Invalid committee port configuration") as u16
+            .expect("Invalid committee port configuration") as u64;
+        CommitteeIndex::new(index)
     }
 }

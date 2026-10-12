@@ -1,15 +1,21 @@
 //! OPA input party.
 
-use std::io::Write;
-
 use crate::communicator::Communicator;
+use crate::communicator::wire::{ClientId, encode};
 use crate::crypto::prg::{default_prg, populate_random};
 use crate::crypto::{
     F256, FieldBytes, OUTER_MODULUS_BITS, SeedHomomorphicPRG, Shamir, field_to_bytes,
 };
 use crate::protocols::client::Client;
+use crate::protocols::opa::messages::{ToServer, Upload};
 use crate::protocols::opa::server::OPAState;
 use crate::util::packing::pack_vector;
+
+fn random_client_id() -> ClientId {
+    let mut id = [0u64; 1];
+    populate_random(&mut id, &mut default_prg());
+    ClientId(id[0])
+}
 
 /// Encoding upper bound on the number of clients (`n = 2^20`).
 pub const NUM_PARTIES_UPPER_BOUND: u64 = 1 << 20;
@@ -190,23 +196,16 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
             .as_ref()
             .expect("Must call encrypt_input before send_input");
 
-        // serialize: [payload_len u32][masked_input...][num_shares u32][share...]
-        let mut data = Vec::new();
-        let payload_len = pack_vector(self.input.as_ref().unwrap()).len() as u32;
-        data.write_all(&payload_len.to_le_bytes()).unwrap();
-        for &x in masked_input {
-            data.write_all(&x.to_le_bytes()).unwrap();
-        }
-        // record the number of shares (committee members)
-        data.write_all(&(shares.len() as u32).to_le_bytes())
-            .unwrap();
-        for share in shares {
-            // each share: length + 32-byte field elements
-            data.write_all(&(share.len() as u32).to_le_bytes()).unwrap();
-            for x in share {
-                data.write_all(x).unwrap();
-            }
-        }
+        let upload = Upload {
+            payload_len: pack_vector(self.input.as_ref().unwrap()).len() as u32,
+            masked_input: masked_input.clone(),
+            seed_shares: shares.clone(),
+        };
+        let message = ToServer::ClientUpload {
+            from: random_client_id(),
+            data: upload,
+        };
+        let data = encode(&message).expect("encode client upload");
 
         if let Err(e) = self.communicator.send_client_upload(&data) {
             eprintln!("Failed to send to server: {}", e);

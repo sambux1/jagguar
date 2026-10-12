@@ -1,17 +1,13 @@
 //! OPA server: public parameters, share routing, unmask, and decode.
 
-use std::io::Read;
 use std::sync::mpsc;
 
 use crate::communicator::Communicator;
-use crate::communicator::wire::{self, encode};
+use crate::communicator::wire::{self, CommitteeIndex, decode, encode};
 use crate::crypto::prg::populate_random_bytes;
-use crate::crypto::{
-    F256, FIELD_ELEMENT_BYTES, FieldBytes, SeedHomomorphicPRG, Shamir, field_from_bytes,
-    field_low_u128,
-};
+use crate::crypto::{F256, SeedHomomorphicPRG, Shamir, field_from_bytes, field_low_u128};
 use crate::protocols::opa::client::{NUM_PARTIES_UPPER_BOUND, OUTPUT_LEN};
-use crate::protocols::opa::messages::FromServer;
+use crate::protocols::opa::messages::{FromServer, Inputs, SeedShare, ToServer};
 use crate::protocols::server::Server;
 use crate::util::packing::unpack_vector;
 use rand::SeedableRng;
@@ -126,67 +122,31 @@ impl OPAServer {
         state.decode_output_with_len(output, payload_len)
     }
 
-    /// This member's Shamir shares, one per client upload.
-    ///
-    /// Each share is concatenated field elements with no inner length prefix.
-    /// [`Self::encode_member_inputs`] adds the `u32` byte length.
-    fn member_shares(raw_messages: &[Vec<u8>], committee_index: usize) -> Vec<Vec<u8>> {
-        let mut committee_shares = Vec::new();
-
+    /// This member's Shamir share from each [`ToServer::ClientUpload`].
+    fn member_shares(raw_messages: &[Vec<u8>], committee_index: usize) -> Vec<SeedShare> {
+        let mut shares = Vec::new();
         for raw_msg in raw_messages {
-            let mut cursor = std::io::Cursor::new(raw_msg);
-            // skip masked_input (we know how long it is from the expand output length)
-            cursor.set_position((4 + OUTPUT_LEN * 16) as u64);
-
-            // read num_shares
-            let mut buf = [0u8; 4];
-            cursor.read_exact(&mut buf).unwrap();
-            let num_shares = u32::from_le_bytes(buf) as usize;
-
-            // skip to the share for this committee member
-            for i in 0..num_shares {
-                cursor.read_exact(&mut buf).unwrap();
-                let share_len = u32::from_le_bytes(buf) as usize;
-                let share_bytes = share_len * FIELD_ELEMENT_BYTES;
-                if i == committee_index {
-                    let mut share = Vec::with_capacity(share_len);
-                    for _ in 0..share_len {
-                        let mut xbuf = [0u8; FIELD_ELEMENT_BYTES];
-                        cursor.read_exact(&mut xbuf).unwrap();
-                        share.push(xbuf);
-                    }
-                    committee_shares.push(share);
-                } else {
-                    cursor.set_position(cursor.position() + share_bytes as u64);
-                }
+            let Ok(ToServer::ClientUpload { data, .. }) = decode(raw_msg) else {
+                eprintln!("client queue contained a non-upload");
+                continue;
+            };
+            match data.seed_shares.get(committee_index) {
+                Some(share) => shares.push(share.clone()),
+                None => eprintln!("client upload missing share for member {committee_index}"),
             }
         }
-
-        let mut serialized_shares = Vec::new();
-        for share in &committee_shares {
-            let mut data = Vec::new();
-            for x in share {
-                data.extend_from_slice(x);
-            }
-            serialized_shares.push(data);
-        }
-        serialized_shares
+        shares
     }
 
-    /// Length-prefixed shares for a `POST /committee-fetch` response.
+    /// [`FromServer::Inputs`] for a `POST /committee-fetch` response.
     fn encode_member_inputs(raw_messages: &[Vec<u8>], committee_index: usize) -> Vec<u8> {
         let shares = Self::member_shares(raw_messages, committee_index);
-        let mut data = Vec::new();
-        for share in &shares {
-            let len = share.len() as u32;
-            data.extend_from_slice(&len.to_le_bytes());
-            data.extend_from_slice(share);
-        }
         println!(
             "Sent {} inputs to committee member {committee_index}",
             shares.len()
         );
-        data
+        let reply = FromServer::Inputs(Inputs { shares });
+        encode(&reply).expect("encode committee inputs")
     }
 
     /// Called when all committee outputs have been received. This stores the
@@ -290,13 +250,12 @@ impl Server for OPAServer {
         let messages = self.get_communicator().get_received_messages();
         self.get_communicator()
             .set_committee_fetch_callback(move |body| {
-                if body.len() != 2 {
-                    eprintln!("committee fetch body must be a u16 index");
+                let Ok(ToServer::RequestInputs { index }) = decode(body) else {
+                    eprintln!("committee fetch body was not RequestInputs");
                     return Vec::new();
-                }
-                let committee_index = u16::from_le_bytes([body[0], body[1]]) as usize;
+                };
                 let inputs = messages.lock().unwrap().clone();
-                Self::encode_member_inputs(&inputs, committee_index)
+                Self::encode_member_inputs(&inputs, index.as_usize())
             });
 
         // Configure auto-trigger for final aggregation when all committee outputs are received
@@ -352,28 +311,14 @@ impl Server for OPAServer {
         );
 
         // extract the secret shares from the committee messages, along with their indices
-        let mut committee_outputs: Vec<(usize, Vec<FieldBytes>)> =
+        let mut committee_outputs: Vec<(CommitteeIndex, SeedShare)> =
             Vec::with_capacity(committee_messages.len());
         for msg in committee_messages {
-            // format: "committee" (9 bytes) || index (u16 LE) || [len u32] [field element x len]
-            if msg.len() < 11 || &msg[..9] != b"committee" {
-                eprintln!("Malformed committee message; missing prefix");
+            let Ok(ToServer::CommitteeUpload { index, data }) = decode(&msg) else {
+                eprintln!("Malformed committee message");
                 continue;
-            }
-            let index_bytes = &msg[9..11];
-            let committee_index = u16::from_le_bytes([index_bytes[0], index_bytes[1]]) as usize;
-
-            let mut cursor = std::io::Cursor::new(&msg[11..]);
-            let mut buf = [0u8; 4];
-            cursor.read_exact(&mut buf).unwrap();
-            let share_len = u32::from_le_bytes(buf) as usize;
-            let mut share = Vec::with_capacity(share_len);
-            for _ in 0..share_len {
-                let mut xbuf = [0u8; FIELD_ELEMENT_BYTES];
-                cursor.read_exact(&mut xbuf).unwrap();
-                share.push(xbuf);
-            }
-            committee_outputs.push((committee_index, share));
+            };
+            committee_outputs.push((index, data));
         }
 
         if committee_outputs.len() < state.reconstruction_threshold as usize {
@@ -391,7 +336,7 @@ impl Server for OPAServer {
         for j in 0..seed_len {
             let mut pairs: Vec<(F256, F256)> = Vec::with_capacity(committee_outputs.len());
             for (idx, share_vec) in committee_outputs.iter() {
-                let x = F256::from((*idx as u64) + 1);
+                let x = F256::from(idx.shamir_x());
                 let y = field_from_bytes(&share_vec[j]);
                 pairs.push((x, y));
             }
@@ -413,32 +358,31 @@ impl Server for OPAServer {
         println!("Expanded SHPRG mask of length {}", mask.len());
 
         // aggregate input ciphertexts in Z_{2^128}
-        let mut client_iter = client_messages.into_iter();
-        let first_raw = client_iter.next().unwrap();
-        let mut cursor = std::io::Cursor::new(&first_raw);
-        let mut buf = [0u8; 4];
-        cursor.read_exact(&mut buf).unwrap();
-        let payload_len = u32::from_le_bytes(buf) as usize;
-
-        let mut aggregated_ciphertext: Vec<u128> = (0..OUTPUT_LEN)
-            .map(|_| {
-                let mut xbuf = [0u8; 16];
-                cursor.read_exact(&mut xbuf).unwrap();
-                u128::from_le_bytes(xbuf)
-            })
-            .collect();
-        let mut num_clients = 1usize;
-        for raw in client_iter {
-            let mut c = std::io::Cursor::new(&raw);
-            c.read_exact(&mut buf).unwrap();
-            for i in 0..OUTPUT_LEN {
-                let mut xbuf = [0u8; 16];
-                c.read_exact(&mut xbuf).unwrap();
-                aggregated_ciphertext[i] =
-                    aggregated_ciphertext[i].wrapping_add(u128::from_le_bytes(xbuf));
-            }
-            num_clients += 1;
+        let mut uploads = Vec::with_capacity(client_messages.len());
+        for raw in client_messages {
+            let Ok(ToServer::ClientUpload { data, .. }) = decode(&raw) else {
+                eprintln!("client queue contained a non-upload");
+                continue;
+            };
+            uploads.push(data);
         }
+        if uploads.is_empty() {
+            eprintln!("no client uploads to aggregate");
+            return;
+        }
+        let payload_len = uploads[0].payload_len as usize;
+        let mut aggregated_ciphertext = uploads[0].masked_input.clone();
+        for upload in uploads.iter().skip(1) {
+            assert_eq!(
+                upload.masked_input.len(),
+                aggregated_ciphertext.len(),
+                "client uploads have different ciphertext lengths"
+            );
+            for (slot, value) in aggregated_ciphertext.iter_mut().zip(&upload.masked_input) {
+                *slot = slot.wrapping_add(*value);
+            }
+        }
+        let num_clients = uploads.len();
         println!("Aggregated masked ciphertext from {} clients", num_clients);
 
         // unmask the aggregated ciphertext in Z_{2^128}
