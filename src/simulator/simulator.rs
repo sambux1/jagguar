@@ -6,8 +6,6 @@ use crate::protocols::client::Client;
 use crate::protocols::committee::Committee;
 use crate::protocols::server::Server;
 use crate::simulator::port_pool::PortPool;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 /// First port in the simulator pool (server is typically this port).
@@ -19,8 +17,6 @@ const INPUT_LEN: usize = 1024;
 
 /// Localhost run of protocol `P`.
 pub struct Simulator<P: Protocol> {
-    /// Set by [`Self::teardown`] to stop the server listen loop.
-    server_shutdown: Option<Arc<AtomicBool>>,
     /// Committee port offsets from the server, set by [`Self::start_server`].
     committee_port_offsets: Option<Vec<u16>>,
     /// Optional channel used by the server to send its final output back to the simulator
@@ -38,7 +34,6 @@ impl<P: Protocol> Simulator<P> {
     /// Empty simulator with a port pool starting at 10000.
     pub fn new() -> Self {
         Self {
-            server_shutdown: Some(Arc::new(AtomicBool::new(false))),
             committee_port_offsets: None,
             server_output: None,
             client_input_channel: None,
@@ -48,33 +43,23 @@ impl<P: Protocol> Simulator<P> {
         }
     }
 
-    /// Spawn the server thread and wait until HTTP `request_state` succeeds.
+    /// Start the HTTP server and wait until `request_state` succeeds.
     ///
     /// # Panics
     ///
     /// Panics if no port is available or the server never becomes reachable.
-    pub fn start_server(&mut self, server_parameters: <P::Server as Server>::SetupParameters)
-    where
-        P::Server: Send + 'static,
-        <P::Server as Server>::SetupParameters: Send + 'static,
-    {
-        let shutdown = Arc::clone(self.server_shutdown.as_ref().unwrap());
-
+    pub fn start_server(&mut self, server_parameters: <P::Server as Server>::SetupParameters) {
         // create a channel for the server to send its final output back
         let (output_sender, output_receiver) = mpsc::channel();
         self.server_output = Some(output_receiver);
 
-        // create server before running it in a thread
         let mut server = P::Server::new(server_parameters);
         // allow the server to use the output channel if it chooses to
         server.set_output_channel(output_sender);
         self.committee_port_offsets = Some(server.get_committee_port_offsets());
 
-        // run the server in a thread
         let port = self.port_pool.allocate_port().unwrap();
-        std::thread::spawn(move || {
-            server.setup_communicator(port, shutdown);
-        });
+        server.setup_communicator(port);
 
         loop {
             let mut probe = P::Client::new();
@@ -254,12 +239,6 @@ impl<P: Protocol> Simulator<P> {
         }
     }
 
-    /// Set the server shutdown flag. Does not join party threads.
-    pub fn teardown(&mut self) {
-        // send the kill signal to the server through the shutdown flag
-        self.server_shutdown
-            .as_ref()
-            .unwrap()
-            .store(true, Ordering::Relaxed);
-    }
+    /// End the run. Currently a no-op: party threads are not joined.
+    pub fn teardown(&mut self) {}
 }

@@ -5,7 +5,7 @@
 //!
 //! - [`crypto`]: SHPRG, Shamir, ChaCha
 //! - [`protocols`]: role traits and semi-honest [`protocols::opa`]
-//! - [`communicator`]: localhost TCP and [`communicator::wire`]
+//! - [`communicator`]: localhost HTTP and [`communicator::wire`]
 //! - [`util`]: integer packing
 //!
 //! A multi-party localhost run is `cargo simulator` (`--features simulator`).

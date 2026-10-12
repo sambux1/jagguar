@@ -1,7 +1,6 @@
 //! OPA server: public parameters, share routing, unmask, and decode.
 
 use std::io::Read;
-use std::net::TcpStream;
 use std::sync::mpsc;
 
 use crate::communicator::Communicator;
@@ -127,16 +126,14 @@ impl OPAServer {
         state.decode_output_with_len(output, payload_len)
     }
 
-    /// Forward this member's Shamir shares over `tcp_stream`.
+    /// This member's Shamir shares, one per client upload.
     ///
-    /// Committee index is `port - 10001` (localhost convention).
-    fn send_to_committee(tcp_stream: TcpStream, raw_messages: Vec<Vec<u8>>, port: u16) {
-        let committee_index = port - 10001; // TODO: this should be a constant/partyID
-
-        // deserialize each client message: [masked_input u128...][num_shares u32][share...]
+    /// Each share is concatenated field elements with no inner length prefix.
+    /// [`Self::encode_member_inputs`] adds the `u32` byte length.
+    fn member_shares(raw_messages: &[Vec<u8>], committee_index: usize) -> Vec<Vec<u8>> {
         let mut committee_shares = Vec::new();
 
-        for raw_msg in &raw_messages {
+        for raw_msg in raw_messages {
             let mut cursor = std::io::Cursor::new(raw_msg);
             // skip masked_input (we know how long it is from the expand output length)
             cursor.set_position((4 + OUTPUT_LEN * 16) as u64);
@@ -151,7 +148,7 @@ impl OPAServer {
                 cursor.read_exact(&mut buf).unwrap();
                 let share_len = u32::from_le_bytes(buf) as usize;
                 let share_bytes = share_len * FIELD_ELEMENT_BYTES;
-                if i == committee_index as usize {
+                if i == committee_index {
                     let mut share = Vec::with_capacity(share_len);
                     for _ in 0..share_len {
                         let mut xbuf = [0u8; FIELD_ELEMENT_BYTES];
@@ -165,9 +162,6 @@ impl OPAServer {
             }
         }
 
-        // serialize all shares for this committee member.
-        // send_on_stream prefixes each blob with its byte length, so the committee
-        // derives the element count as byte_len / FIELD_ELEMENT_BYTES — do not add a redundant inner prefix.
         let mut serialized_shares = Vec::new();
         for share in &committee_shares {
             let mut data = Vec::new();
@@ -176,14 +170,23 @@ impl OPAServer {
             }
             serialized_shares.push(data);
         }
+        serialized_shares
+    }
 
-        // send the combined shares to the committee member
-        if let Err(e) = Communicator::send_on_stream(tcp_stream, serialized_shares) {
-            eprintln!(
-                "Failed to send data to committee member {}: {}",
-                committee_index, e
-            );
+    /// Length-prefixed shares for a `POST /committee-fetch` response.
+    fn encode_member_inputs(raw_messages: &[Vec<u8>], committee_index: usize) -> Vec<u8> {
+        let shares = Self::member_shares(raw_messages, committee_index);
+        let mut data = Vec::new();
+        for share in &shares {
+            let len = share.len() as u32;
+            data.extend_from_slice(&len.to_le_bytes());
+            data.extend_from_slice(share);
         }
+        println!(
+            "Sent {} inputs to committee member {committee_index}",
+            shares.len()
+        );
+        data
     }
 
     /// Called when all committee outputs have been received. This stores the
@@ -280,19 +283,20 @@ impl Server for OPAServer {
         };
     }
 
-    /// Record `port` and register share-forwarding and aggregation callbacks.
+    /// Record `port` and register the fetch and aggregation callbacks.
     fn on_communicator_setup(&mut self, port: u16) {
         self.state.port = port;
 
-        // Capture the received_messages Arc so the callback can access it
         let messages = self.get_communicator().get_received_messages();
-
-        // Set up the callback to gather inputs and send them through the stream
         self.get_communicator()
-            .set_signal_callback(move |stream, port| {
-                println!("Signal handler called in server");
+            .set_committee_fetch_callback(move |body| {
+                if body.len() != 2 {
+                    eprintln!("committee fetch body must be a u16 index");
+                    return Vec::new();
+                }
+                let committee_index = u16::from_le_bytes([body[0], body[1]]) as usize;
                 let inputs = messages.lock().unwrap().clone();
-                Self::send_to_committee(stream, inputs, port);
+                Self::encode_member_inputs(&inputs, committee_index)
             });
 
         // Configure auto-trigger for final aggregation when all committee outputs are received

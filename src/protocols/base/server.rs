@@ -1,11 +1,9 @@
 use crate::communicator::Communicator;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
 
 /// Aggregation server: public parameters, input collection, and decode.
 ///
-/// Communication is localhost TCP via [`Communicator`].
+/// Communication is localhost HTTP via [`Communicator`].
 pub trait Server: Sized {
     type SetupParameters;
     /// Public state distributed to clients and committee members. Must be
@@ -34,29 +32,15 @@ pub trait Server: Sized {
     fn set_communicator(&mut self, comm: Communicator);
     fn get_communicator(&mut self) -> &mut Communicator;
 
-    /// Called after the communicator is bound, before the listen loop.
+    /// Called after the communicator is installed.
     fn on_communicator_setup(&mut self, _port: u16) {
         // default: do nothing
     }
 
-    /// Bind `port` and run the listen loop until `shutdown` is set.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the listener fails to bind or the listen loop returns an
-    /// error.
-    fn setup_communicator(&mut self, port: u16, shutdown: Arc<AtomicBool>) {
-        let mut comm = Communicator::new(port);
-        comm.set_shutdown_flag(shutdown);
-        comm.start_server().expect("failed to start server");
+    /// Install the communicator for `port` and run protocol setup.
+    fn setup_communicator(&mut self, port: u16) {
+        let comm = Communicator::new(port);
         self.set_communicator(comm);
-
-        // call the derived class's on_communicator_setup method
         self.on_communicator_setup(port);
-        println!("Server listening on port {}", port);
-
-        self.get_communicator()
-            .listen_loop()
-            .expect("failed to listen");
     }
 }

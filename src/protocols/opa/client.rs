@@ -94,9 +94,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
     }
 
     fn request_state(&mut self) -> std::io::Result<()> {
-        self.server_state = Some(OPAState::from_reply(
-            &self.communicator.request_state()?,
-        )?);
+        self.server_state = Some(OPAState::from_reply(&self.communicator.request_state()?)?);
         Ok(())
     }
 
@@ -210,7 +208,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
             }
         }
 
-        if let Err(e) = self.communicator.send_upload(&data) {
+        if let Err(e) = self.communicator.send_client_upload(&data) {
             eprintln!("Failed to send to server: {}", e);
         }
     }

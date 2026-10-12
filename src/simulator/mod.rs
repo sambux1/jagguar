@@ -1,7 +1,7 @@
 //! Localhost multi-party simulator.
 //!
 //! Spawns a [`Protocol`](crate::protocols::Protocol) server, clients, and
-//! committee on loopback TCP (ports from 10000). Behind the `simulator`
+//! committee on localhost (ports from 10000). Behind the `simulator`
 //! feature. Run with `cargo simulator`.
 
 pub mod port_pool;

@@ -32,9 +32,7 @@ impl Committee for OPACommittee {
     }
 
     fn request_state(&mut self) -> std::io::Result<()> {
-        self.server_state = Some(OPAState::from_reply(
-            &self.communicator.request_state()?,
-        )?);
+        self.server_state = Some(OPAState::from_reply(&self.communicator.request_state()?)?);
         Ok(())
     }
 
@@ -43,15 +41,17 @@ impl Committee for OPACommittee {
         self.server_state = Some(state);
     }
 
-    /// Signal the server and parse length-prefixed Shamir shares.
+    /// Fetch this member's shares with `POST /committee-fetch` and parse them.
+    ///
+    /// The body is this member's index. The response is length-prefixed shares:
+    /// `[byte_len u32][byte_len bytes of field elements LE]...`.
     fn retrieve_inputs(&mut self) {
-        let server_port = self.server_state.as_ref().unwrap().port;
+        let committee_index = self.committee_index();
         let inputs = self
             .communicator
-            .receive_from_server(server_port)
+            .fetch_committee_inputs(&committee_index.to_le_bytes())
             .expect("Failed to receive inputs from server");
 
-        // Format from send_on_stream: [byte_len u32][byte_len bytes of field elements LE]...
         let mut cursor = Cursor::new(&inputs);
         let mut shares = Vec::new();
 
@@ -130,12 +130,7 @@ impl Committee for OPACommittee {
         let mut data = Vec::new();
         data.extend_from_slice(b"committee");
 
-        let server_port = self.server_state.as_ref().unwrap().port;
-        let local_port = self.communicator.port();
-        let committee_index: u16 = local_port
-            .checked_sub(server_port + 1)
-            .expect("Invalid committee port configuration")
-            as u16;
+        let committee_index = self.committee_index();
         data.extend_from_slice(&committee_index.to_le_bytes());
 
         let share = self
@@ -149,7 +144,22 @@ impl Committee for OPACommittee {
         }
 
         self.communicator
-            .send_to_server(self.server_state.as_ref().unwrap().port, &data)
+            .send_committee_output(&data)
             .expect("Failed to send output share to server");
+    }
+}
+
+impl OPACommittee {
+    /// `local_port - server_port - 1`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the port layout is not `server_port + 1 + index`.
+    fn committee_index(&self) -> u16 {
+        let server_port = self.server_state.as_ref().unwrap().port;
+        let local_port = self.communicator.port();
+        local_port
+            .checked_sub(server_port + 1)
+            .expect("Invalid committee port configuration") as u16
     }
 }

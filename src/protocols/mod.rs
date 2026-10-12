@@ -1,7 +1,7 @@
 //! Aggregation protocol roles and instantiations.
 //!
 //! [`Client`], [`Server`], [`Committee`], and [`Protocol`] are the localhost
-//! simulation API: methods take TCP ports and a
+//! simulation API: methods take a port and a
 //! [`crate::communicator::Communicator`]. [`opa`] is the current instantiation
 //! ([OPA](https://eprint.iacr.org/2024/723.pdf), semi-honest).
 
