@@ -1,5 +1,7 @@
 //! OPA server: public parameters, share routing, unmask, and decode.
 
+use std::io::Write;
+use std::os::fd::FromRawFd;
 use std::sync::mpsc;
 
 use crate::communicator::Communicator;
@@ -64,6 +66,9 @@ pub struct OPAState {
     /// Optional channel for sending decoded output back to the simulator.
     #[serde(skip)]
     pub output_sender: Option<mpsc::Sender<Vec<u32>>>,
+    /// Optional file descriptor for sending decoded output to the process manager.
+    #[serde(skip)]
+    pub output_fd: Option<i32>,
     /// Optional cache of messages used during aggregation.
     #[serde(skip)]
     pub client_messages: Vec<Vec<u8>>,
@@ -117,6 +122,11 @@ impl OPAState {
 }
 
 impl OPAServer {
+    /// File descriptor that receives the decoded aggregate.
+    pub fn set_output_fd(&mut self, fd: i32) {
+        self.state.output_fd = Some(fd);
+    }
+
     /// [`OPAState::decode_output_with_len`] for the server's aggregate path.
     fn decode_output(state: &OPAState, output: Vec<u128>, payload_len: usize) -> Vec<u32> {
         state.decode_output_with_len(output, payload_len)
@@ -183,6 +193,7 @@ impl Server for OPAServer {
                 committee_port_offsets: Vec::new(),
                 port: 0,
                 output_sender: None,
+                output_fd: None,
                 client_messages: Vec::new(),
                 committee_messages: Vec::new(),
             },
@@ -225,6 +236,7 @@ impl Server for OPAServer {
 
         // preserve any existing output sender when refreshing the public state
         let output_sender = self.state.output_sender.clone();
+        let output_fd = self.state.output_fd;
         let client_messages = self.state.client_messages.clone();
         let committee_messages = self.state.committee_messages.clone();
 
@@ -238,6 +250,7 @@ impl Server for OPAServer {
             committee_port_offsets,
             port: 0,
             output_sender,
+            output_fd,
             client_messages,
             committee_messages,
         };
@@ -394,6 +407,12 @@ impl Server for OPAServer {
 
         let decoded = Self::decode_output(&state, unmasked, payload_len);
         println!("Decoded output length: {}", decoded.len());
+
+        if let Some(fd) = state.output_fd {
+            let mut out = unsafe { std::fs::File::from_raw_fd(fd) };
+            let bytes = encode(&decoded).expect("encode decoded output");
+            out.write_all(&bytes).expect("write decoded output");
+        }
 
         if let Some(ref sender) = state.output_sender {
             if let Err(e) = sender.send(decoded.clone()) {

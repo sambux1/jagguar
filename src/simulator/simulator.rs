@@ -1,12 +1,24 @@
 //! Thread-per-party localhost run of a [`crate::protocols::Protocol`].
 
-use crate::crypto::prg::{default_prg, populate_random};
+use crate::crypto::prg::{default_prg, populate_random, populate_random_bytes};
 use crate::protocols::Protocol;
 use crate::protocols::client::Client;
-use crate::protocols::committee::Committee;
 use crate::protocols::server::Server;
 use crate::simulator::port_pool::PortPool;
-use std::sync::mpsc;
+use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
+use std::io::Read;
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
+use std::process::{Child, Command};
+
+unsafe extern "C" {
+    fn dup2(oldfd: i32, newfd: i32) -> i32;
+}
+
+/// File descriptor the server process writes the decoded aggregate to.
+const SERVER_OUTPUT_FD: i32 = 3;
 
 /// First port in the simulator pool (server is typically this port).
 const STARTING_PORT: u16 = 10000;
@@ -19,14 +31,20 @@ const INPUT_LEN: usize = 1024;
 pub struct Simulator<P: Protocol> {
     /// Committee port offsets from the server, set by [`Self::start_server`].
     committee_port_offsets: Option<Vec<u16>>,
-    /// Optional channel used by the server to send its final output back to the simulator
-    server_output: Option<mpsc::Receiver<Vec<u32>>>,
-    /// Channel used by clients to send their randomly chosen inputs back to the simulator
-    client_input_channel: Option<mpsc::Receiver<Vec<u32>>>,
     /// Expected output: elementwise sum of all client inputs
     expected_output: Option<Vec<u64>>,
+    /// Seeds passed to client processes.
+    client_seeds: Vec<[u8; 32]>,
+    /// Read end of the pipe carrying the decoded aggregate.
+    server_output_pipe: Option<UnixStream>,
     /// Port pool for managing port allocation and status
     port_pool: PortPool,
+    /// Child process running the aggregation server, if started.
+    server_process: Option<Child>,
+    /// Child processes running clients.
+    client_processes: Vec<Child>,
+    /// Child processes running committee members.
+    committee_processes: Vec<Child>,
     _marker: core::marker::PhantomData<(P, P::Server, P::Client, P::Committee)>,
 }
 
@@ -35,31 +53,47 @@ impl<P: Protocol> Simulator<P> {
     pub fn new() -> Self {
         Self {
             committee_port_offsets: None,
-            server_output: None,
-            client_input_channel: None,
             expected_output: None,
+            client_seeds: Vec::new(),
+            server_output_pipe: None,
             port_pool: PortPool::new(STARTING_PORT, DEFAULT_MAX_PORTS),
+            server_process: None,
+            client_processes: Vec::new(),
+            committee_processes: Vec::new(),
             _marker: core::marker::PhantomData,
         }
     }
 
-    /// Start the HTTP server and wait until `request_state` succeeds.
+    /// Start the aggregation server as a child process and wait until it
+    /// is reachable.
     ///
     /// # Panics
     ///
-    /// Panics if no port is available or the server never becomes reachable.
+    /// Panics if no port is available or the server binary cannot be spawned.
     pub fn start_server(&mut self, server_parameters: <P::Server as Server>::SetupParameters) {
-        // create a channel for the server to send its final output back
-        let (output_sender, output_receiver) = mpsc::channel();
-        self.server_output = Some(output_receiver);
-
-        let mut server = P::Server::new(server_parameters);
-        // allow the server to use the output channel if it chooses to
-        server.set_output_channel(output_sender);
-        self.committee_port_offsets = Some(server.get_committee_port_offsets());
-
+        let _server_parameters = server_parameters;
         let port = self.port_pool.allocate_port().unwrap();
-        server.setup_communicator(port);
+
+        let mut server = std::env::current_exe().unwrap();
+        server.set_file_name("server");
+        let (reader, writer) = UnixStream::pair().unwrap();
+        // Spawn the server as a separate process.
+        let mut cmd = Command::new(&server);
+        cmd.arg(port.to_string())
+            .args(["40", "5", "5", "9"])
+            .arg(SERVER_OUTPUT_FD.to_string());
+        unsafe {
+            cmd.pre_exec(move || {
+                if dup2(writer.as_raw_fd(), SERVER_OUTPUT_FD) < 0 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+        self.server_process = Some(cmd.spawn().unwrap());
+        self.server_output_pipe = Some(reader);
+        self.committee_port_offsets = Some((1..=9).collect());
 
         loop {
             let mut probe = P::Client::new();
@@ -70,113 +104,95 @@ impl<P: Protocol> Simulator<P> {
         }
     }
 
-    /// Spawn `num_clients` threads. Each samples a random 1024-vector
-    /// in `[0, 2^20)`, reports it on the input channel, encrypts, and sends.
+    /// Stop the aggregation server process.
+    pub fn kill_server(&mut self) {
+        if let Some(mut child) = self.server_process.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// Start `num_clients` client processes. Each expands a random seed to
+    /// an input of length [`INPUT_LEN`], encrypts, and sends to the server.
     ///
     /// # Panics
     ///
-    /// Panics if a client cannot request state.
-    pub fn start_clients(&mut self, num_clients: usize)
-    where
-        P::Client: Send + 'static,
-        P::Input: From<u32>,
-    {
-        // create a channel for clients to send their inputs back to the simulator
-        let (input_sender, input_receiver) = mpsc::channel();
-        self.client_input_channel = Some(input_receiver);
+    /// Panics if the client binary cannot be spawned.
+    pub fn start_clients(&mut self, num_clients: usize) {
+        let mut client = std::env::current_exe().unwrap();
+        client.set_file_name("client");
 
-        // create the clients
+        let mut rng = default_prg();
         for _ in 0..num_clients {
-            let mut client = P::Client::new();
-            let sender = input_sender.clone();
-
-            std::thread::spawn(move || {
-                client.request_state().expect("request state");
-
-                // generate a random input
-                let mut rng = default_prg();
-                let mut input = vec![0u32; INPUT_LEN];
-
-                // generate random input, masked to the range [0, 2^20)
-                populate_random(&mut input, &mut rng);
-                input = input.iter().map(|x| x % (1 << 20) as u32).collect();
-
-                // send the input to the simulator (non-blocking for unbounded channel)
-                let _ = sender.send(input.clone());
-
-                let input: Vec<P::Input> = input.into_iter().map(|x| x.into()).collect();
-
-                // set the client's input
-                client.set_input(input);
-
-                // encrypt the input
-                client.encrypt_input();
-
-                // send the input to the server
-                client.send_input();
-            });
+            let mut seed = [0u8; 32];
+            populate_random_bytes(&mut seed, &mut rng);
+            self.client_seeds.push(seed);
+            // Spawn the client as a separate process.
+            self.client_processes.push(
+                Command::new(&client)
+                    .arg(seed_to_hex(&seed))
+                    .arg(INPUT_LEN.to_string())
+                    .spawn()
+                    .unwrap(),
+            );
         }
 
         println!("{} clients started", num_clients);
     }
 
-    /// Spawn one committee thread per offset. Ports are
-    /// `10000 + offset`, not taken from the pool.
+    /// Wait for all client processes to exit.
+    pub fn wait_clients(&mut self) {
+        for mut child in self.client_processes.drain(..) {
+            let _ = child.wait();
+        }
+    }
+
+    /// Start one committee process per port offset.
     ///
     /// # Panics
     ///
-    /// Panics if [`Self::start_server`] has not run.
-    pub fn start_committee(&mut self)
-    where
-        P::Committee: Send + 'static,
-    {
+    /// Panics if [`Self::start_server`] has not run, or if the committee
+    /// binary cannot be spawned.
+    pub fn start_committee(&mut self) {
         assert!(
             self.committee_port_offsets.is_some(),
             "Committee port offsets are not set"
         );
 
+        let mut committee = std::env::current_exe().unwrap();
+        committee.set_file_name("committee");
+
         let port_offsets = self.committee_port_offsets.as_ref().unwrap();
-
-        for (_, port_offset) in port_offsets.iter().enumerate() {
+        for port_offset in port_offsets {
             let port = STARTING_PORT + *port_offset;
-
-            let mut committee_member = P::Committee::new(port);
-
-            // run the committee member in a thread
-            std::thread::spawn(move || {
-                committee_member.request_state().expect("request state");
-                committee_member.retrieve_inputs();
-                committee_member.aggregate();
-                committee_member.send_output();
-            });
+            // Spawn the committee member as a separate process.
+            self.committee_processes.push(
+                Command::new(&committee)
+                    .arg(port.to_string())
+                    .spawn()
+                    .unwrap(),
+            );
         }
 
         println!("{} committee members started", port_offsets.len());
     }
 
-    /// Block until `expected_count` client inputs arrive (or the channel
-    /// disconnects) and store their elementwise sum as the expected output.
-    pub fn collect_client_inputs(&mut self, expected_count: usize) -> Vec<Vec<u32>> {
-        let mut inputs = Vec::new();
-        if let Some(ref receiver) = self.client_input_channel {
-            // loop over all received messages until we have all expected inputs
-            // or until the channel is disconnected
-            while inputs.len() < expected_count {
-                match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
-                    Ok(input) => {
-                        inputs.push(input);
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        // continue waiting if we haven't received all inputs yet
-                        continue;
-                    }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        // channel disconnected, break and return what we have
-                        break;
-                    }
-                }
-            }
+    /// Wait for all committee processes to exit.
+    pub fn wait_committee(&mut self) {
+        for mut child in self.committee_processes.drain(..) {
+            let _ = child.wait();
         }
+    }
+
+    /// Expand stored client seeds and store their elementwise sum as the
+    /// expected output.
+    pub fn collect_client_inputs(&mut self, expected_count: usize) -> Vec<Vec<u32>> {
+        let inputs: Vec<Vec<u32>> = self
+            .client_seeds
+            .iter()
+            .take(expected_count)
+            .map(|seed| expand_seed(*seed, INPUT_LEN))
+            .collect();
 
         // compute elementwise sum over all client inputs
         let sum: Vec<u64> = if inputs.is_empty() {
@@ -194,51 +210,55 @@ impl<P: Protocol> Simulator<P> {
         inputs
     }
 
-    /// Non-blocking: print whether the server output matches the expected sum.
+    /// Print whether the server output matches the expected sum.
     ///
-    /// Prints a placeholder if the server has not sent yet. Call
-    /// [`Self::collect_client_inputs`] first to populate the expected sum.
+    /// Call [`Self::collect_client_inputs`] first to populate the expected sum.
     pub fn output(&mut self) {
-        match self.server_output {
-            Some(ref receiver) => match receiver.try_recv() {
-                Ok(output) => {
-                    // compare with expected output
-                    if let Some(ref expected) = self.expected_output {
-                        if output.len() == expected.len() {
-                            let matches = output
-                                .iter()
-                                .zip(expected.iter())
-                                .all(|(&actual, &expected)| actual as u64 == expected);
+        let Some(ref mut pipe) = self.server_output_pipe else {
+            println!("Server output: <no output available yet>");
+            return;
+        };
+        let mut buf = Vec::new();
+        pipe.read_to_end(&mut buf).unwrap();
+        let output: Vec<u32> = crate::communicator::wire::decode(&buf).unwrap();
 
-                            if matches {
-                                println!("Output matches expected sum!");
-                            } else {
-                                println!("Output does NOT match expected sum!");
-                            }
-                        } else {
-                            println!(
-                                "Output length mismatch! Expected {} values, got {}",
-                                expected.len(),
-                                output.len()
-                            );
-                        }
-                    } else {
-                        println!("Warning: No expected output available for comparison");
-                    }
+        if let Some(ref expected) = self.expected_output {
+            if output.len() == expected.len() {
+                let matches = output
+                    .iter()
+                    .zip(expected.iter())
+                    .all(|(&actual, &expected)| actual as u64 == expected);
+
+                if matches {
+                    println!("Output matches expected sum!");
+                } else {
+                    println!("Output does NOT match expected sum!");
                 }
-                Err(mpsc::TryRecvError::Empty) => {
-                    println!("Server output: <no output available yet>");
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    println!("Server output channel disconnected");
-                }
-            },
-            None => {
-                println!("Server output receiver not configured");
+            } else {
+                println!(
+                    "Output length mismatch! Expected {} values, got {}",
+                    expected.len(),
+                    output.len()
+                );
             }
+        } else {
+            println!("Warning: No expected output available for comparison");
         }
     }
 
     /// End the run. Currently a no-op: party threads are not joined.
     pub fn teardown(&mut self) {}
+}
+
+/// Encode a 32-byte seed as 64 hex characters.
+fn seed_to_hex(seed: &[u8; 32]) -> String {
+    seed.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Expand a seed to `length` elements in `[0, 2^20)`.
+fn expand_seed(seed: [u8; 32], length: usize) -> Vec<u32> {
+    let mut rng = ChaCha20Rng::from_seed(seed);
+    let mut input = vec![0u32; length];
+    populate_random(&mut input, &mut rng);
+    input.iter().map(|x| x % (1 << 20)).collect()
 }
