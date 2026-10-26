@@ -5,44 +5,30 @@ use std::net::TcpStream;
 
 use super::{
     CLIENT_UPLOAD_PATH, COMMITTEE_FETCH_PATH, COMMITTEE_UPLOAD_PATH, HTTP_ADDR, STATE_PATH,
+    Transport,
 };
 
 /// Party endpoint that talks to the aggregation server over blocking HTTP.
 ///
-/// `id` is this party's identity, used by the committee to derive its
-/// index relative to the server's port.
-pub struct NativeTransport {
-    id: u16,
-}
+/// Party identity is stored by the protocol role rather than by the
+/// transport.
+#[derive(Default)]
+pub struct NativeTransport;
 
-impl NativeTransport {
-    /// Native transport for party with identity `id`.
-    pub fn new(id: u16) -> Self {
-        Self { id }
-    }
-
-    /// Party identity.
-    pub fn id(&self) -> u16 {
-        self.id
-    }
-
-    /// Request public state from the aggregation server.
-    pub fn request_state(&self) -> std::io::Result<Vec<u8>> {
+impl Transport for NativeTransport {
+    async fn request_state(&self) -> std::io::Result<Vec<u8>> {
         get(HTTP_ADDR)
     }
 
-    /// Send a client upload to the aggregation server.
-    pub fn send_client_upload(&self, data: &[u8]) -> std::io::Result<()> {
+    async fn send_client_upload(&self, data: &[u8]) -> std::io::Result<()> {
         post(HTTP_ADDR, CLIENT_UPLOAD_PATH, data).map(|_| ())
     }
 
-    /// Send a committee output to the aggregation server.
-    pub fn send_committee_output(&self, data: &[u8]) -> std::io::Result<()> {
+    async fn send_committee_output(&self, data: &[u8]) -> std::io::Result<()> {
         post(HTTP_ADDR, COMMITTEE_UPLOAD_PATH, data).map(|_| ())
     }
 
-    /// Fetch one committee member's inputs from the aggregation server.
-    pub fn fetch_committee_inputs(&self, index: &[u8]) -> std::io::Result<Vec<u8>> {
+    async fn fetch_committee_inputs(&self, index: &[u8]) -> std::io::Result<Vec<u8>> {
         post(HTTP_ADDR, COMMITTEE_FETCH_PATH, index)
     }
 }

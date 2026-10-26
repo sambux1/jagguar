@@ -19,14 +19,16 @@ fn main() {
     let seed = parse_hex_seed(&args[0]);
     let length = args[1].parse().expect("invalid length");
 
-    let mut client = OPAClient::<u32>::new();
-    if client.request_state().is_err() {
-        eprintln!("Error: cannot connect to server");
-        std::process::exit(1);
-    }
-    client.set_input(expand_seed(seed, length));
-    client.encrypt_input();
-    client.send_input();
+    pollster::block_on(async {
+        let mut client = OPAClient::<u32>::new();
+        if client.request_state().await.is_err() {
+            eprintln!("Error: cannot connect to server");
+            std::process::exit(1);
+        }
+        client.set_input(expand_seed(seed, length));
+        client.encrypt_input();
+        client.send_input().await;
+    });
 }
 
 /// Expand a seed to `length` elements in `[0, 2^20)`.

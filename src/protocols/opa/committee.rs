@@ -1,6 +1,6 @@
 //! OPA committee member.
 
-use crate::communicator::NativeTransport;
+use crate::communicator::{DefaultTransport, Transport};
 use crate::communicator::wire::{CommitteeIndex, decode, encode};
 use crate::crypto::{F256, FIELD_ELEMENT_BYTES, FieldBytes, field_from_bytes, field_to_bytes};
 use crate::protocols::committee::Committee;
@@ -9,30 +9,34 @@ use crate::protocols::opa::state::OPAState;
 
 /// Committee member: sum Shamir y-shares over [`crate::crypto::F256`] and return
 /// the result.
-pub struct OPACommittee {
+pub struct OPACommittee<C: Transport = DefaultTransport> {
+    port: u16,
     server_state: Option<OPAState>,
-    communicator: NativeTransport,
+    transport: C,
     input_shares: Option<Vec<Vec<FieldBytes>>>,
     output_share: Option<Vec<FieldBytes>>,
 }
 
-impl Committee for OPACommittee {
+impl<C> Committee for OPACommittee<C>
+where
+    C: Transport + Default,
+{
     type ServerState = OPAState;
 
     /// Bind this member to local `port`.
     fn new(port: u16) -> Self {
-        let communicator = NativeTransport::new(port);
-
         Self {
+            port,
             server_state: None,
-            communicator,
+            transport: C::default(),
             input_shares: None,
             output_share: None,
         }
     }
 
-    fn request_state(&mut self) -> std::io::Result<()> {
-        self.server_state = Some(OPAState::from_reply(&self.communicator.request_state()?)?);
+    async fn request_state(&mut self) -> std::io::Result<()> {
+        let state_bytes = self.transport.request_state().await?;
+        self.server_state = Some(OPAState::from_reply(&state_bytes)?);
         Ok(())
     }
 
@@ -44,14 +48,15 @@ impl Committee for OPACommittee {
     /// Fetch this member's shares with `POST /committee-fetch`.
     ///
     /// The body is [`ToServer::RequestInputs`]. The response is [`FromServer::Inputs`].
-    fn retrieve_inputs(&mut self) {
+    async fn retrieve_inputs(&mut self) {
         let request = ToServer::RequestInputs {
             index: self.committee_index(),
         };
         let request_bytes = encode(&request).expect("encode committee fetch");
         let reply = self
-            .communicator
+            .transport
             .fetch_committee_inputs(&request_bytes)
+            .await
             .expect("Failed to receive inputs from server");
         let FromServer::Inputs(inputs) = decode(&reply).expect("decode committee inputs") else {
             panic!("committee fetch reply was not inputs");
@@ -109,7 +114,7 @@ impl Committee for OPACommittee {
     ///
     /// Panics if [`Self::aggregate`] has not been called, or if the port
     /// layout is not `server_port + 1 + index`.
-    fn send_output(&mut self) {
+    async fn send_output(&mut self) {
         let share = self
             .output_share
             .clone()
@@ -119,13 +124,14 @@ impl Committee for OPACommittee {
             data: share,
         };
         let data = encode(&message).expect("encode committee output");
-        self.communicator
+        self.transport
             .send_committee_output(&data)
+            .await
             .expect("Failed to send output share to server");
     }
 }
 
-impl OPACommittee {
+impl<C: Transport> OPACommittee<C> {
     /// `local_port - server_port - 1`.
     ///
     /// # Panics
@@ -133,8 +139,8 @@ impl OPACommittee {
     /// Panics if the port layout is not `server_port + 1 + index`.
     fn committee_index(&self) -> CommitteeIndex {
         let server_port = self.server_state.as_ref().unwrap().port;
-        let local_port = self.communicator.id();
-        let index = local_port
+        let index = self
+            .port
             .checked_sub(server_port + 1)
             .expect("Invalid committee port configuration") as u64;
         CommitteeIndex::new(index)

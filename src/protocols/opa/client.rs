@@ -1,6 +1,6 @@
 //! OPA input party.
 
-use crate::communicator::NativeTransport;
+use crate::communicator::{DefaultTransport, Transport};
 use crate::communicator::wire::{ClientId, encode};
 use crate::crypto::prg::{default_prg, populate_random};
 use crate::crypto::{
@@ -25,16 +25,16 @@ pub const MAX_FIELD_VALUE: u128 = 1u128 << (OUTER_MODULUS_BITS - 1);
 pub const OUTPUT_LEN: usize = 4096;
 
 /// OPA client: encode, mask with an SHPRG, Shamir-share the seed.
-pub struct OPAClient<T> {
+pub struct OPAClient<T, C: Transport = DefaultTransport> {
     input: Option<Vec<T>>,
     server_state: Option<OPAState>,
-    communicator: NativeTransport,
+    transport: C,
     encrypted_output: Option<(Vec<u128>, Vec<Vec<FieldBytes>>)>,
     #[cfg(test)]
     last_seed: Option<Vec<u128>>,
 }
 
-impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
+impl<T: Copy + Into<u32> + num_traits::FromPrimitive, C: Transport> OPAClient<T, C> {
     /// Input vector, if [`crate::protocols::Client::set_input`] has been called.
     pub fn get_input(&self) -> Option<&Vec<T>> {
         self.input.as_ref()
@@ -82,7 +82,11 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> OPAClient<T> {
     }
 }
 
-impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T> {
+impl<T, C> Client<T> for OPAClient<T, C>
+where
+    T: Copy + Into<u32> + num_traits::FromPrimitive,
+    C: Transport + Default,
+{
     type Output = (Vec<u128>, Vec<Vec<FieldBytes>>);
     type ServerState = OPAState;
 
@@ -92,15 +96,16 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         Self {
             input: None,
             server_state: None,
-            communicator: NativeTransport::new(0),
+            transport: C::default(),
             encrypted_output: None,
             #[cfg(test)]
             last_seed: None,
         }
     }
 
-    fn request_state(&mut self) -> std::io::Result<()> {
-        self.server_state = Some(OPAState::from_reply(&self.communicator.request_state()?)?);
+    async fn request_state(&mut self) -> std::io::Result<()> {
+        let state_bytes = self.transport.request_state().await?;
+        self.server_state = Some(OPAState::from_reply(&state_bytes)?);
         Ok(())
     }
 
@@ -190,7 +195,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
     }
 
     /// Send the masked input and per-committee shares to the server.
-    fn send_input(&mut self) {
+    async fn send_input(&mut self) {
         let (masked_input, shares) = self
             .encrypted_output
             .as_ref()
@@ -207,7 +212,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         };
         let data = encode(&message).expect("encode client upload");
 
-        if let Err(e) = self.communicator.send_client_upload(&data) {
+        if let Err(e) = self.transport.send_client_upload(&data).await {
             eprintln!("Failed to send to server: {}", e);
         }
     }

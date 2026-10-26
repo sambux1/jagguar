@@ -13,6 +13,16 @@ pub mod wire;
 pub use communicator::Communicator;
 pub use native_transport::NativeTransport;
 
+pub type DefaultTransport = NativeTransport;
+
+#[allow(async_fn_in_trait)]
+pub trait Transport {
+    async fn request_state(&self) -> std::io::Result<Vec<u8>>;
+    async fn send_client_upload(&self, data: &[u8]) -> std::io::Result<()>;
+    async fn fetch_committee_inputs(&self, index: &[u8]) -> std::io::Result<Vec<u8>>;
+    async fn send_committee_output(&self, data: &[u8]) -> std::io::Result<()>;
+}
+
 /// Localhost address the server binds and the native transport connects to.
 pub(crate) const HTTP_ADDR: &str = "127.0.0.1:8080";
 pub(crate) const STATE_PATH: &str = "/state";

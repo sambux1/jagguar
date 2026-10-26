@@ -97,7 +97,7 @@ impl<P: Protocol> Simulator<P> {
 
         loop {
             let mut probe = P::Client::new();
-            if probe.request_state().is_ok() {
+            if pollster::block_on(probe.request_state()).is_ok() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));

@@ -14,12 +14,14 @@ fn main() {
         .parse()
         .expect("invalid port");
 
-    let mut committee = OPACommittee::new(port);
-    if committee.request_state().is_err() {
-        eprintln!("Error: cannot connect to server");
-        std::process::exit(1);
-    }
-    committee.retrieve_inputs();
-    committee.aggregate();
-    committee.send_output();
+    pollster::block_on(async {
+        let mut committee: OPACommittee = OPACommittee::new(port);
+        if committee.request_state().await.is_err() {
+            eprintln!("Error: cannot connect to server");
+            std::process::exit(1);
+        }
+        committee.retrieve_inputs().await;
+        committee.aggregate();
+        committee.send_output().await;
+    });
 }
