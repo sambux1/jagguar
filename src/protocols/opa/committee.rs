@@ -1,17 +1,17 @@
 //! OPA committee member.
 
-use crate::communicator::Communicator;
+use crate::communicator::NativeTransport;
 use crate::communicator::wire::{CommitteeIndex, decode, encode};
 use crate::crypto::{F256, FIELD_ELEMENT_BYTES, FieldBytes, field_from_bytes, field_to_bytes};
 use crate::protocols::committee::Committee;
 use crate::protocols::opa::messages::{FromServer, ToServer};
-use crate::protocols::opa::server::OPAState;
+use crate::protocols::opa::state::OPAState;
 
 /// Committee member: sum Shamir y-shares over [`crate::crypto::F256`] and return
 /// the result.
 pub struct OPACommittee {
     server_state: Option<OPAState>,
-    communicator: Communicator,
+    communicator: NativeTransport,
     input_shares: Option<Vec<Vec<FieldBytes>>>,
     output_share: Option<Vec<FieldBytes>>,
 }
@@ -21,7 +21,7 @@ impl Committee for OPACommittee {
 
     /// Bind this member to local `port`.
     fn new(port: u16) -> Self {
-        let communicator = Communicator::new(port);
+        let communicator = NativeTransport::new(port);
 
         Self {
             server_state: None,
@@ -133,7 +133,7 @@ impl OPACommittee {
     /// Panics if the port layout is not `server_port + 1 + index`.
     fn committee_index(&self) -> CommitteeIndex {
         let server_port = self.server_state.as_ref().unwrap().port;
-        let local_port = self.communicator.port();
+        let local_port = self.communicator.id();
         let index = local_port
             .checked_sub(server_port + 1)
             .expect("Invalid committee port configuration") as u64;

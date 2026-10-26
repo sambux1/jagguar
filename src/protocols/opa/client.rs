@@ -1,6 +1,6 @@
 //! OPA input party.
 
-use crate::communicator::Communicator;
+use crate::communicator::NativeTransport;
 use crate::communicator::wire::{ClientId, encode};
 use crate::crypto::prg::{default_prg, populate_random};
 use crate::crypto::{
@@ -8,7 +8,7 @@ use crate::crypto::{
 };
 use crate::protocols::client::Client;
 use crate::protocols::opa::messages::{ToServer, Upload};
-use crate::protocols::opa::server::OPAState;
+use crate::protocols::opa::state::OPAState;
 use crate::util::packing::pack_vector;
 
 fn random_client_id() -> ClientId {
@@ -28,7 +28,7 @@ pub const OUTPUT_LEN: usize = 4096;
 pub struct OPAClient<T> {
     input: Option<Vec<T>>,
     server_state: Option<OPAState>,
-    communicator: Communicator,
+    communicator: NativeTransport,
     encrypted_output: Option<(Vec<u128>, Vec<Vec<FieldBytes>>)>,
     #[cfg(test)]
     last_seed: Option<Vec<u128>>,
@@ -92,7 +92,7 @@ impl<T: Copy + Into<u32> + num_traits::FromPrimitive> Client<T> for OPAClient<T>
         Self {
             input: None,
             server_state: None,
-            communicator: Communicator::new(0),
+            communicator: NativeTransport::new(0),
             encrypted_output: None,
             #[cfg(test)]
             last_seed: None,

@@ -6,7 +6,7 @@ use crate::crypto::FieldBytes;
 use crate::protocols::base::messages::{
     FromServer as GenericFromServer, ToServer as GenericToServer,
 };
-use crate::protocols::opa::server::OPAState;
+use crate::protocols::opa::state::OPAState;
 
 /// One Shamir y-share per seed component.
 pub type SeedShare = Vec<FieldBytes>;

@@ -4,6 +4,16 @@ use jagguar::protocols::opa::{OPA, OPASetupParameters};
 use jagguar::simulator::Simulator;
 
 fn main() {
+    // rebuild the server, client, and committee binaries the simulator spawns
+    let mut build = std::process::Command::new(env!("CARGO"));
+    build
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["build", "--quiet", "--features", "simulator", "--bins"]);
+    if !cfg!(debug_assertions) {
+        build.arg("--release");
+    }
+    assert!(build.status().unwrap().success(), "failed to build binaries");
+
     // create the simulator
     let mut sim: Simulator<OPA<u32>> = Simulator::new();
 
@@ -13,7 +23,7 @@ fn main() {
     sim.start_server(server_parameters);
 
     // create many clients
-    let num_clients = 1000;
+    let num_clients = 100;
     sim.start_clients(num_clients);
     println!("Waiting for client uploads...");
     sim.wait_clients();

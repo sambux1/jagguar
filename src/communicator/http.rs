@@ -1,18 +1,13 @@
 //! HTTP byte transport. The communicator does not interpret payloads.
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
 use tiny_http::{Method, Response, Server};
 
-use super::Communicator;
-
-const HTTP_ADDR: &str = "127.0.0.1:8080";
-const STATE_PATH: &str = "/state";
-const CLIENT_UPLOAD_PATH: &str = "/client-upload";
-const COMMITTEE_UPLOAD_PATH: &str = "/committee-upload";
-const COMMITTEE_FETCH_PATH: &str = "/committee-fetch";
+use super::{
+    CLIENT_UPLOAD_PATH, COMMITTEE_FETCH_PATH, COMMITTEE_UPLOAD_PATH, Communicator, HTTP_ADDR,
+    STATE_PATH,
+};
 
 impl Communicator {
     /// Serve `GET /state`, `POST /client-upload`, `POST /committee-upload`,
@@ -36,62 +31,6 @@ impl Communicator {
             }
         });
     }
-
-    /// Request public state from the aggregation server.
-    pub fn request_state(&self) -> std::io::Result<Vec<u8>> {
-        get(HTTP_ADDR)
-    }
-
-    /// Send a client upload to the aggregation server.
-    pub fn send_client_upload(&self, data: &[u8]) -> std::io::Result<()> {
-        post(HTTP_ADDR, CLIENT_UPLOAD_PATH, data).map(|_| ())
-    }
-
-    /// Send a committee output to the aggregation server.
-    pub fn send_committee_output(&self, data: &[u8]) -> std::io::Result<()> {
-        post(HTTP_ADDR, COMMITTEE_UPLOAD_PATH, data).map(|_| ())
-    }
-
-    /// Fetch one committee member's inputs from the aggregation server.
-    pub fn fetch_committee_inputs(&self, index: &[u8]) -> std::io::Result<Vec<u8>> {
-        post(HTTP_ADDR, COMMITTEE_FETCH_PATH, index)
-    }
-}
-
-fn request(addr: &str, method: &str, path: &str, body: &[u8]) -> std::io::Result<Vec<u8>> {
-    let mut stream = TcpStream::connect(addr)?;
-    write!(
-        stream,
-        "{method} {path} HTTP/1.0\r\n\
-         Host: {addr}\r\n\
-         Content-Length: {}\r\n\
-         Connection: close\r\n\r\n",
-        body.len()
-    )?;
-    stream.write_all(body)?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf)?;
-    let split = buf
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| std::io::Error::other("no HTTP header terminator"))?;
-    let status = buf[..split]
-        .split(|&b| b == b'\n')
-        .next()
-        .and_then(|line| std::str::from_utf8(line).ok()?.split_whitespace().nth(1))
-        .ok_or_else(|| std::io::Error::other("no HTTP status"))?;
-    if status != "200" {
-        return Err(std::io::Error::other(format!("HTTP {status}")));
-    }
-    Ok(buf[split + 4..].to_vec())
-}
-
-fn get(addr: &str) -> std::io::Result<Vec<u8>> {
-    request(addr, "GET", STATE_PATH, &[])
-}
-
-fn post(addr: &str, path: &str, data: &[u8]) -> std::io::Result<Vec<u8>> {
-    request(addr, "POST", path, data)
 }
 
 fn serve(
@@ -182,6 +121,7 @@ fn serve_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::communicator::native_transport::{get, post};
 
     fn listen(
         state: Vec<u8>,
