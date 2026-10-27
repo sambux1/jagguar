@@ -9,23 +9,30 @@
 pub mod client;
 pub mod committee;
 pub mod messages;
+#[cfg(feature = "native")]
 pub mod server;
 pub mod state;
 
 pub use client::OPAClient;
 pub use committee::OPACommittee;
 pub use messages::{FromServer, Inputs, SeedShare, ToServer, Upload};
+#[cfg(feature = "native")]
 pub use server::OPAServer;
 pub use state::{OPASetupParameters, OPAState};
 
 // instantiate the OPA protocol
+#[cfg(feature = "native")]
 use crate::protocols::Protocol;
+#[cfg(feature = "native")]
 use core::marker::PhantomData;
+#[cfg(feature = "native")]
 use num_traits::FromPrimitive;
 
 /// Protocol marker binding [`OPAClient`], [`OPAServer`], and [`OPACommittee`].
+#[cfg(feature = "native")]
 pub struct OPA<T>(pub PhantomData<T>);
 
+#[cfg(feature = "native")]
 impl<T> Protocol for OPA<T>
 where
     T: Copy + Into<u32> + FromPrimitive,

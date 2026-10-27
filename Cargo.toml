@@ -10,6 +10,9 @@ documentation = "https://docs.rs/jagguar"
 homepage = "https://jagguar.readthedocs.io"
 readme = "README.md"
 
+[workspace]
+members = ["jagguar-wasm"]
+
 [package.metadata.docs.rs]
 features = ["simulator"]
 
@@ -24,8 +27,23 @@ num-traits = "0.2"
 serde = { version = "1", features = ["derive"] }
 bincode = { version = "2", features = ["serde"] }
 thiserror = "2"
-tiny_http = "0.12"
-pollster = "0.4"
+tiny_http = { version = "0.12", optional = true }
+pollster = { version = "0.4", optional = true }
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "committee"
+path = "src/bin/committee.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+required-features = ["native"]
 
 [[bin]]
 name = "simulator"
@@ -33,8 +51,14 @@ path = "src/simulator/main.rs"
 required-features = ["simulator"]
 
 [features]
-default = []
-simulator = []
+default = ["native"]
+native = ["dep:pollster", "dep:tiny_http"]
+simulator = ["native"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+gloo-net = { version = "0.6", features = ["http"] }
+wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

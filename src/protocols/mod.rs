@@ -11,10 +11,13 @@ pub mod base;
 
 pub use base::client;
 pub use base::committee;
+#[cfg(feature = "native")]
 pub use base::server;
 
 pub use base::client::Client;
 pub use base::committee::Committee;
+#[cfg(feature = "native")]
 pub use base::server::Server;
 
+#[cfg(feature = "native")]
 pub use base::protocol::Protocol;

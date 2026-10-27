@@ -6,14 +6,28 @@
 //!
 //! [`wire`] holds party IDs and the codec used by typed messages.
 
-pub mod communicator;
-pub mod http;
-pub mod native_transport;
 pub mod wire;
-pub use communicator::Communicator;
-pub use native_transport::NativeTransport;
 
+#[cfg(feature = "native")]
+pub mod communicator;
+#[cfg(feature = "native")]
+pub mod http;
+#[cfg(feature = "native")]
+pub mod native_transport;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_transport;
+
+#[cfg(feature = "native")]
+pub use communicator::Communicator;
+#[cfg(feature = "native")]
+pub use native_transport::NativeTransport;
+#[cfg(target_arch = "wasm32")]
+pub use wasm_transport::WasmTransport;
+
+#[cfg(feature = "native")]
 pub type DefaultTransport = NativeTransport;
+#[cfg(target_arch = "wasm32")]
+pub type DefaultTransport = WasmTransport;
 
 #[allow(async_fn_in_trait)]
 pub trait Transport {
@@ -24,7 +38,9 @@ pub trait Transport {
 }
 
 /// Localhost address the server binds and the native transport connects to.
+#[cfg(feature = "native")]
 pub(crate) const HTTP_ADDR: &str = "127.0.0.1:8080";
+
 pub(crate) const STATE_PATH: &str = "/state";
 pub(crate) const CLIENT_UPLOAD_PATH: &str = "/client-upload";
 pub(crate) const COMMITTEE_UPLOAD_PATH: &str = "/committee-upload";
