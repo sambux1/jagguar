@@ -28,3 +28,6 @@ scripts/parameters/lattice-estimator/
 env/
 
 *.png
+
+# wasm-pack output for the demo page
+apps/demo/pkg/
