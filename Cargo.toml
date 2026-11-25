@@ -11,7 +11,7 @@ homepage = "https://jagguar.readthedocs.io"
 readme = "README.md"
 
 [workspace]
-members = ["jagguar-wasm"]
+members = ["jagguar-wasm", "jagguar-python"]
 
 [package.metadata.docs.rs]
 features = ["simulator"]

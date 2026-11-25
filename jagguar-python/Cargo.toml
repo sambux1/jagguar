@@ -1,0 +1,14 @@
+[package]
+name = "jagguar-python"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "jagguar"
+crate-type = ["cdylib"]
+
+[dependencies]
+jagguar-core = { path = "..", package = "jagguar" }
+pollster = "0.4"
+pyo3 = "0.29"

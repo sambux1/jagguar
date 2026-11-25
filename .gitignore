@@ -31,3 +31,11 @@ env/
 
 # wasm-pack output for the demo page
 apps/demo/pkg/
+
+# Python
+__pycache__/
+*.pyc
+*.so
+.venv/
+dist/
+*.egg-info/
