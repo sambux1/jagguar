@@ -12,12 +12,14 @@
 //!   Expansion is almost homomorphic in the seed: `Expand(s0 + s1)` is within
 //!   rounding error 1 of `Expand(s0) + Expand(s1)` in the inner modulus.
 //! - [`Shamir`]: Shamir secret sharing over a prime field. OPA uses [`F256`].
+//! - [`pki`]: Public-key encryption and public-key infrastructure.
 //! - [`prg`]: ChaCha20 RNG helpers, including seekable expansion of the SHPRG
 //!   public matrix.
 //! - Field helpers: [`field_to_bytes`], [`field_from_bytes`], [`field_low_u128`].
 
 use ark_ff::{Fp, MontBackend, MontConfig};
 
+pub mod pki;
 pub mod prg;
 pub mod seed_homomorphic_prg;
 pub mod shamir;

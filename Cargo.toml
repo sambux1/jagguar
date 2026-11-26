@@ -27,6 +27,7 @@ num-traits = "0.2"
 serde = { version = "1", features = ["derive"] }
 bincode = { version = "2", features = ["serde"] }
 thiserror = "2"
+crypto_box = { version = "0.9", features = ["seal", "rand_core"] }
 tiny_http = { version = "0.12", optional = true }
 pollster = { version = "0.4", optional = true }
 
